@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: myfirstproject
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        scope: build
+        value: ${NEXT_PUBLIC_SUPABASE_URL}
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        scope: build
+        value: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        scope: build
+        value: ${SUPABASE_SERVICE_ROLE_KEY}
+      - key: NODE_ENV
+        scope: build
+        value: production
