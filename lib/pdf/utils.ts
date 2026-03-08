@@ -77,7 +77,7 @@ export async function removePDFPassword(
   password: string
 ): Promise<Buffer> {
   try {
-    const pdfDoc = await PDFDocument.load({ pdfBuffer: buffer, ignoreEncryption: true });
+    const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
     
     // Clone the PDF without encryption
     const newPdfDoc = await PDFDocument.create();
@@ -119,7 +119,7 @@ export async function getPDFInfo(
     
     return {
       pageCount: pdf.numPages,
-      isEncrypted: pdf.isEncrypted,
+      isEncrypted: (pdf as any).isEncrypted ?? false,
     };
   } catch (error) {
     throw new Error(`Failed to get PDF info: ${error}`);
