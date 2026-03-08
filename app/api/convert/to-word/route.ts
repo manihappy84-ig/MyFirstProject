@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const baseFileName = file.name.replace('.pdf', '');
     const fileName = `${baseFileName}.docx`;
 
-    return new NextResponse(docxContent, {
+    return new NextResponse(new Uint8Array(docxContent), {
       status: 200,
       headers: {
         'Content-Disposition': `attachment; filename="${fileName}"`,

@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const baseFileName = file.name.replace('.pdf', '');
     const fileName = `${baseFileName}_unlocked.pdf`;
 
-    return new NextResponse(unlockedPDF, {
+    return new NextResponse(new Uint8Array(unlockedPDF), {
       status: 200,
       headers: {
         'Content-Disposition': `attachment; filename="${fileName}"`,
