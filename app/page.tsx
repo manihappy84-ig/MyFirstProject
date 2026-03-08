@@ -70,6 +70,29 @@ export default function Home() {
         </div>
       </div>
 
+      {/* AI Services & Engineering Section */}
+      <div className="max-w-7xl mx-auto px-4 py-20">
+        <h2 className="text-4xl font-bold text-white text-center mb-6">AI Services &amp; Engineering</h2>
+        <div className="grid md:grid-cols-3 gap-8">
+          <div className="bg-white bg-opacity-10 backdrop-blur border border-white border-opacity-20 rounded-xl p-6">
+            <h3 className="text-2xl font-semibold text-white mb-2">AI Services</h3>
+            <ul className="list-disc list-inside text-gray-300 space-y-2">
+              <li>Custom Model Development</li>
+              <li>API &amp; Integration</li>
+              <li>Data Strategy &amp; Preparation</li>
+            </ul>
+          </div>
+          <div className="bg-white bg-opacity-10 backdrop-blur border border-white border-opacity-20 rounded-xl p-6">
+            <h3 className="text-2xl font-semibold text-white mb-2">AI Engineering</h3>
+            <p className="text-gray-300">Scalable, secure, and maintainable AI systems built for production.</p>
+          </div>
+          <div className="bg-white bg-opacity-10 backdrop-blur border border-white border-opacity-20 rounded-xl p-6">
+            <h3 className="text-2xl font-semibold text-white mb-2">Consulting</h3>
+            <p className="text-gray-300">Expert guidance on AI adoption and best practices.</p>
+          </div>
+        </div>
+      </div>
+
       {/* Converter Section */}
       <div id="converter" className="max-w-7xl mx-auto px-4 py-20">
         <div className="bg-white bg-opacity-5 backdrop-blur-xl border border-white border-opacity-10 rounded-2xl p-8 md:p-12 shadow-2xl">
