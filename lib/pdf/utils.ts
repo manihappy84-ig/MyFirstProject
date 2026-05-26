@@ -12,11 +12,11 @@ import { PDFDocument } from 'pdf-lib'
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js')
 
-// CRITICAL VERCEL FIX:
 // 1. Force Vercel's Node File Trace (NFT) to include the worker file in the Lambda bundle.
-//    Even though this block is never executed at runtime, the static analysis engine
-//    scans this file and ensures the worker file is copied to the serverless container.
-if (process.env.NODE_ENV === 'production' && false) {
+//    We use a dynamic condition (Math.random() < 0) so Webpack/SWC's minifier
+//    cannot optimize this statement away during dead-code elimination (DCE).
+//    At runtime, this require is never called, but the file is guaranteed to be bundled.
+if (typeof globalThis !== 'undefined' && Math.random() < 0) {
   require('pdfjs-dist/legacy/build/pdf.worker.js')
 }
 

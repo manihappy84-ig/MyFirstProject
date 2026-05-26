@@ -8,6 +8,11 @@ const nextConfig = {
   // Instead they are required directly from node_modules at runtime.
   experimental: {
     serverComponentsExternalPackages: ['pdfjs-dist', 'canvas'],
+    outputFileTracingIncludes: {
+      '/api/convert/to-text': ['./node_modules/pdfjs-dist/legacy/build/pdf.worker.js'],
+      '/api/convert/to-word': ['./node_modules/pdfjs-dist/legacy/build/pdf.worker.js'],
+      '/api/convert/unlock': ['./node_modules/pdfjs-dist/legacy/build/pdf.worker.js'],
+    },
   },
 
   webpack: (config, { isServer }) => {
