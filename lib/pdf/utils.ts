@@ -8,24 +8,16 @@
  * file is found correctly in both local dev and Vercel serverless.
  */
 import { PDFDocument } from 'pdf-lib'
-import path from 'path'
-
 // ─── pdfjs setup ──────────────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js')
 
-// CRITICAL: Use an absolute path so serverless environments (Vercel Lambda)
-// can locate pdf.worker.js regardless of the process CWD.
-try {
-  const workerPath = path.join(
-    path.dirname(require.resolve('pdfjs-dist/legacy/build/pdf.js')),
-    'pdf.worker.js'
-  )
-  pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath
-} catch {
-  // Fallback: empty string triggers FakeWorker (acceptable for text extraction)
-  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
-}
+// CRITICAL VERCEL FIX:
+// In serverless environments, relative path resolution of "./pdf.worker.js"
+// fails depending on the CWD (/var/task).
+// Setting workerSrc to the exact npm package path allows Node.js / require
+// to locate the worker package cleanly via standard node_modules resolution.
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.js'
 
 // ─── Text Extraction ──────────────────────────────────────────────────────────
 
