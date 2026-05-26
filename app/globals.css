@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.animate-fade-in-up { animation: fadeInUp 0.45s ease forwards; }
+.toast-enter        { animation: slideInRight 0.3s ease forwards; }
+
+.glass {
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.glass-hover {
+  transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+}
+.glass-hover:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(96,165,250,0.4);
+  transform: translateY(-3px);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.3), 0 0 0 1px rgba(96,165,250,0.15);
+}
+
+.tool-card {
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+  position: relative;
+  overflow: hidden;
+}
+.tool-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(96,165,250,0.06) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.tool-card:hover::before  { opacity: 1; }
+.tool-card:focus-visible  { outline: 2px solid #60a5fa; outline-offset: 2px; }
+
+.progress-bar { transition: width 0.45s cubic-bezier(0.4,0,0.2,1); }
+
+.dropzone-active {
+  border-color: #60a5fa !important;
+  background: rgba(96,165,250,0.08) !important;
+  transform: scale(1.01);
+}
