@@ -13,10 +13,15 @@ import { PDFDocument } from 'pdf-lib'
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js')
 
 // CRITICAL VERCEL FIX:
-// In serverless environments, relative path resolution of "./pdf.worker.js"
-// fails depending on the CWD (/var/task).
-// Setting workerSrc to the exact npm package path allows Node.js / require
-// to locate the worker package cleanly via standard node_modules resolution.
+// 1. Force Vercel's Node File Trace (NFT) to include the worker file in the Lambda bundle.
+//    Even though this block is never executed at runtime, the static analysis engine
+//    scans this file and ensures the worker file is copied to the serverless container.
+if (process.env.NODE_ENV === 'production' && false) {
+  require('pdfjs-dist/legacy/build/pdf.worker.js')
+}
+
+// 2. Set workerSrc to the exact npm package path so Node.js resolves it cleanly
+//    via standard node_modules resolution.
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.js'
 
 // ─── Text Extraction ──────────────────────────────────────────────────────────
