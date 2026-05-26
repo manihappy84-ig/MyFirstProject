@@ -1,21 +1,37 @@
 /**
  * PDF Utilities — server-side only.
  * Uses pdfjs-dist/legacy for Node.js-compatible text extraction.
+ *
+ * VERCEL FIX: pdfjs-dist tries to require('./pdf.worker.js') using a relative
+ * path, which Node.js resolves relative to CWD (/var/task) — not the module
+ * location. We must set an absolute path via require.resolve() so the worker
+ * file is found correctly in both local dev and Vercel serverless.
  */
 import { PDFDocument } from 'pdf-lib'
+import path from 'path'
 
 // ─── pdfjs setup ──────────────────────────────────────────────────────────────
-// We must use require() so Next.js doesn't attempt to bundle/tree-shake the worker.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js')
-// Disable the web worker — we're running in Node.js.
-pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+
+// CRITICAL: Use an absolute path so serverless environments (Vercel Lambda)
+// can locate pdf.worker.js regardless of the process CWD.
+try {
+  const workerPath = path.join(
+    path.dirname(require.resolve('pdfjs-dist/legacy/build/pdf.js')),
+    'pdf.worker.js'
+  )
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath
+} catch {
+  // Fallback: empty string triggers FakeWorker (acceptable for text extraction)
+  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+}
 
 // ─── Text Extraction ──────────────────────────────────────────────────────────
 
 /**
  * Extract all text from a PDF buffer using pdfjs-dist.
- * Works with Node.js 24, handles both text-based and mixed PDFs.
+ * Works with Node.js 18/20/24, handles both text-based and mixed PDFs.
  */
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   const data = new Uint8Array(buffer)
@@ -25,8 +41,6 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
     useWorkerFetch: false,
     isEvalSupported: false,
     useSystemFonts: true,
-    disableWorker: true,
-    // Suppress canvas-related errors — not needed for text extraction
     verbosity: 0,
   })
 
@@ -38,17 +52,13 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
     const page = await pdf.getPage(pageNum)
     const content = await page.getTextContent()
 
-    // items can be TextItem or TextMarkedContent
     let lastY: number | null = null
     let lineText = ''
     const lines: string[] = []
 
     for (const item of content.items) {
       if (!('str' in item)) continue
-
       const y = (item as any).transform?.[5] ?? null
-
-      // Start a new line when y-position changes significantly
       if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) {
         if (lineText.trim()) lines.push(lineText.trim())
         lineText = ''
@@ -57,7 +67,6 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
       if (y !== null) lastY = y
     }
     if (lineText.trim()) lines.push(lineText.trim())
-
     pageTexts.push(lines.join('\n'))
   }
 
@@ -75,7 +84,7 @@ export async function convertPDFToWord(buffer: Buffer): Promise<Buffer> {
 }
 
 async function buildDocx(text: string): Promise<Buffer> {
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx')
+  const { Document, Packer, Paragraph, TextRun } = await import('docx')
 
   const paragraphs = text.split('\n').map((line) => {
     const trimmed = line.trim()
@@ -88,10 +97,7 @@ async function buildDocx(text: string): Promise<Buffer> {
     return new Paragraph({ children: [new TextRun({ text: trimmed })] })
   })
 
-  const doc = new Document({
-    sections: [{ children: paragraphs }],
-  })
-
+  const doc = new Document({ sections: [{ children: paragraphs }] })
   return Buffer.from(await Packer.toBuffer(doc))
 }
 
