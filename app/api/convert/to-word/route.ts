@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { convertPDFToWord, isPDFFile } from '@/lib/pdf/utils';
+import { convertPDFToWord, isPDFFile, extractTextFromPDF } from '@/lib/pdf/utils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,20 +31,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Extract text for preview
+    const text = await extractTextFromPDF(buffer);
+
     // Convert PDF to proper Word document
     const docxBuffer = await convertPDFToWord(buffer);
 
     const baseFileName = file.name.replace(/\.pdf$/i, '');
     const fileName = `${baseFileName}.docx`;
 
-    return new NextResponse(new Uint8Array(docxBuffer), {
-      status: 200,
-      headers: {
-        'Content-Disposition': `attachment; filename="${fileName}"`,
-        'Content-Type':
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Length': String(docxBuffer.length),
-      },
+    return NextResponse.json({
+      success: true,
+      text,
+      docxBase64: docxBuffer.toString('base64'),
+      fileName,
     });
   } catch (error: any) {
     console.error('PDF to Word conversion error:', error);

@@ -19,6 +19,9 @@ export interface TextResult {
 export interface WordResult {
   blob: Blob
   fileName: string
+  text: string
+  charCount: number
+  wordCount: number
 }
 
 export interface UnlockResult {
@@ -68,10 +71,31 @@ export async function convertPdfToWord(file: File): Promise<ConversionResult<Wor
       return { success: false, error: err.error || `Server error ${response.status}` }
     }
 
-    const blob = await response.blob()
-    const baseName = file.name.replace(/\.pdf$/i, '')
+    const json = await response.json()
+    const binaryString = window.atob(json.docxBase64)
+    const len = binaryString.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
 
-    return { success: true, data: { blob, fileName: `${baseName}.docx` } }
+    const blob = new Blob([bytes], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+
+    const text: string = json.text || ''
+    const words = text.trim().split(/\s+/).filter(Boolean)
+
+    return {
+      success: true,
+      data: {
+        blob,
+        fileName: json.fileName || `${file.name.replace(/\.pdf$/i, '')}.docx`,
+        text,
+        charCount: text.length,
+        wordCount: words.length,
+      },
+    }
   } catch (err: any) {
     return { success: false, error: err.message || 'Network error. Please try again.' }
   }

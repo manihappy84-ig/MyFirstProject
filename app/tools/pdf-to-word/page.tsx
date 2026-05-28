@@ -31,6 +31,7 @@ export default function PdfToWordPage() {
   const [result, setResult]       = useState<WordResult | null>(null)
   const [error, setError]         = useState<string | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
+  const [copied, setCopied]       = useState(false)
 
   const [ocrProgress, setOcrProgress] = useState<OcrProgress>({
     stage: 'idle',
@@ -186,9 +187,15 @@ export default function PdfToWordPage() {
       const docxBlob = await Packer.toBlob(doc)
 
       const baseName = file.name.replace(/\.pdf$/i, '')
+      const finalText = accumulatedText.trim().replace(new RegExp(`\\n\\n--- Page ${total} Break ---\\n\\n$`), '')
+      const words = finalText.trim().split(/\s+/).filter(Boolean)
+
       setResult({
         blob: docxBlob,
         fileName: `${baseName}.docx`,
+        text: finalText,
+        charCount: finalText.length,
+        wordCount: words.length,
       })
       setStage('done')
     } catch (err: any) {
@@ -201,6 +208,13 @@ export default function PdfToWordPage() {
   const handleReset = () => {
     setFile(null); setStage('idle'); setProgress(0)
     setResult(null); setError(null); setFileError(null)
+  }
+
+  const handleCopy = async () => {
+    if (!result?.text) return
+    await navigator.clipboard.writeText(result.text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   const isProcessing = ['preparing', 'converting', 'generating', 'ocr_processing'].includes(stage)
@@ -224,7 +238,7 @@ export default function PdfToWordPage() {
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4 py-12">
+      <div className="max-w-6xl mx-auto px-4 py-12">
         {/* Title */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-3xl mb-4">📄</div>
@@ -288,47 +302,117 @@ export default function PdfToWordPage() {
           return null
         })()}
 
-        {/* DONE */}
+        {/* ── DONE: split layout ── */}
         {stage === 'done' && result ? (
-          <div className="space-y-5 animate-fade-in-up">
-            <div className="bg-green-900/20 border border-green-500/30 rounded-2xl p-8 text-center">
-              <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
+          <div className="grid lg:grid-cols-3 gap-6 animate-fade-in-up">
+            {/* Text preview */}
+            <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-2xl overflow-hidden animate-fade-in-up">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+                <div>
+                  <h2 className="text-white font-semibold">Extracted Word Content</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {result.wordCount ? result.wordCount.toLocaleString() : '0'} words ·{' '}
+                    {result.charCount ? result.charCount.toLocaleString() : '0'} characters
+                  </p>
+                </div>
+                <span className="flex items-center gap-1 text-xs text-green-400">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Ready
+                </span>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-2">Conversion Complete!</h2>
-              <p className="text-gray-400 mb-1">Your Word document is ready</p>
-              <p className="text-green-400 text-sm font-medium">{result.fileName}</p>
+              <div className="p-5 h-96 lg:h-[500px] overflow-y-auto">
+                {result.text ? (
+                  <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+                    {result.text}
+                  </pre>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center">
+                    <p className="text-gray-500">No preview text available.</p>
+                    <p className="text-gray-600 text-sm mt-2">
+                      The document has been compiled successfully to Word format.
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Stage checklist */}
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-              <div className="flex justify-between text-sm mb-3">
-                {['Prepared ✓', 'Converted ✓', 'Generated ✓', 'Done! 🎉'].map((s) => (
-                  <span key={s} className="text-green-400 font-medium">{s}</span>
-                ))}
+            {/* Actions panel */}
+            <div className="flex flex-col gap-4">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+                <h3 className="text-white font-semibold mb-4">Actions</h3>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => downloadBlob(result.blob, result.fileName)}
+                    className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:opacity-90 transition shadow-lg shadow-purple-500/20"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Word Document
+                  </button>
+
+                  <button
+                    onClick={handleCopy}
+                    className={`flex items-center justify-center gap-2 w-full py-3 px-4 font-semibold rounded-xl border transition ${
+                      copied
+                        ? 'bg-green-500/20 border-green-500/40 text-green-300'
+                        : 'bg-white/5 border-white/20 text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {copied ? (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Copied!
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        Copy Text
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={handleReset}
+                    className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/20 text-white font-semibold rounded-xl hover:bg-white/10 transition"
+                  >
+                    Convert Another File
+                  </button>
+
+                  <Link
+                    href="/"
+                    className="flex items-center justify-center w-full py-3 text-gray-400 hover:text-white text-sm transition"
+                  >
+                    ← Back Home
+                  </Link>
+                </div>
               </div>
-              <ProgressBar progress={100} color="green" />
-            </div>
 
-            <button
-              onClick={() => result && downloadBlob(result.blob, result.fileName)}
-              className="w-full py-4 px-6 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-xl hover:opacity-90 transition text-lg shadow-lg shadow-purple-500/25 flex items-center justify-center gap-3"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Download Word Document
-            </button>
-
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={handleReset} className="py-3 px-4 bg-white/5 border border-white/20 text-white font-semibold rounded-xl hover:bg-white/10 transition text-sm">
-                Convert Another
-              </button>
-              <Link href="/" className="flex items-center justify-center py-3 px-4 bg-white/5 border border-white/20 text-gray-400 hover:text-white font-semibold rounded-xl hover:bg-white/10 transition text-sm">
-                Back Home
-              </Link>
+              {/* File stats */}
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+                <h3 className="text-white font-semibold mb-3">File Info</h3>
+                <dl className="space-y-2 text-sm">
+                  {[
+                    { label: 'Name', value: file?.name ?? '-' },
+                    { label: 'Size', value: file ? `${(file.size / 1024).toFixed(1)} KB` : '-' },
+                    { label: 'Words', value: result.wordCount ? result.wordCount.toLocaleString() : '0' },
+                    { label: 'Characters', value: result.charCount ? result.charCount.toLocaleString() : '0' },
+                  ].map((row) => (
+                    <div key={row.label} className="flex justify-between gap-2">
+                      <dt className="text-gray-400">{row.label}</dt>
+                      <dd className="text-white font-medium truncate max-w-[140px]" title={row.value}>
+                        {row.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
             </div>
           </div>
 
