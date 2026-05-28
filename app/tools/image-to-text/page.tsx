@@ -33,6 +33,17 @@ export default function ImageToTextPage() {
   const [isMediaLoading, setIsMediaLoading] = useState(false)
   const [mediaStatus, setMediaStatus] = useState('')
 
+  // Interactive image pre-processing states for 100% OCR accuracy
+  const [rotation, setRotation] = useState(0) // 0, 90, 180, 270 degrees
+  const [isEnhanced, setIsEnhanced] = useState(false) // toggle grayscale high-contrast thresholding
+
+  // AI Assistant states
+  const [aiText, setAiText] = useState<string | null>(null)
+  const [isAiLoading, setIsAiLoading] = useState(false)
+  const [activeView, setActiveView] = useState<'original' | 'ai'>('original')
+  const [aiAction, setAiAction] = useState<'summarize' | 'clean' | 'format' | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
+
   const handleFileSelect = useCallback((f: File) => {
     setFile(f)
     setPreviewUrl(URL.createObjectURL(f))
@@ -41,6 +52,12 @@ export default function ImageToTextPage() {
     setFileError(null)
     setText('')
     setOcrProgress({ percent: 0, label: '' })
+    setRotation(0)
+    setIsEnhanced(false)
+    setAiText(null)
+    setActiveView('original')
+    setAiAction(null)
+    setAiError(null)
   }, [])
 
   const handleReset = () => {
@@ -52,7 +69,61 @@ export default function ImageToTextPage() {
     setError(null)
     setFileError(null)
     setOcrProgress({ percent: 0, label: '' })
+    setRotation(0)
+    setIsEnhanced(false)
+    setAiText(null)
+    setActiveView('original')
+    setAiAction(null)
+    setAiError(null)
     handleStopAudio()
+  }
+
+  // Native high-resolution canvas pre-processor for flawless OCR
+  const getProcessedImage = (imgFile: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.src = URL.createObjectURL(imgFile)
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Canvas context error'))
+          return
+        }
+
+        const angleRad = (rotation * Math.PI) / 180
+        const sin = Math.abs(Math.sin(angleRad))
+        const cos = Math.abs(Math.cos(angleRad))
+        
+        const width = img.naturalWidth
+        const height = img.naturalHeight
+        
+        canvas.width = cos * width + sin * height
+        canvas.height = sin * width + cos * height
+
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+        ctx.rotate(angleRad)
+        ctx.drawImage(img, -width / 2, -height / 2)
+
+        if (isEnhanced) {
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+          const d = imgData.data
+          for (let i = 0; i < d.length; i += 4) {
+            // Standard luminance formula
+            const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+            // Sharp binarization threshold to strip shadows
+            const binarized = gray > 130 ? 255 : 0
+            d[i] = d[i + 1] = d[i + 2] = binarized
+          }
+          ctx.putImageData(imgData, 0, 0)
+        }
+
+        const dataUrl = canvas.toDataURL('image/png')
+        URL.revokeObjectURL(img.src)
+        resolve(dataUrl)
+      }
+      img.onerror = (e) => reject(e)
+    })
   }
 
   const handleScan = async () => {
@@ -62,9 +133,12 @@ export default function ImageToTextPage() {
     setOcrProgress({ percent: 0, label: 'Initializing character scanning engine…' })
 
     try {
+      setOcrProgress({ percent: 10, label: 'Pre-processing image layout & contrast…' })
+      const processedDataUrl = await getProcessedImage(file)
+
       const Tesseract = (await import('tesseract.js')).default
 
-      const ocrResult = await Tesseract.recognize(file, 'eng', {
+      const ocrResult = await Tesseract.recognize(processedDataUrl, 'eng', {
         logger: (m: any) => {
           if (m.status === 'recognizing text') {
             const pct = Math.round(m.progress * 100)
@@ -78,28 +152,57 @@ export default function ImageToTextPage() {
 
       const scannedText = ocrResult.data.text.trim()
       if (!scannedText) {
-        throw new Error('No character or text contents could be scanned from this image. Please upload a clearer image.')
+        throw new Error('No character or text could be scanned. Make sure the image is correctly oriented and has clear text.')
       }
 
       setText(scannedText)
       setStage('done')
     } catch (err: any) {
       console.error('Image OCR failed:', err)
-      setError(err.message || 'Failed to scan image. Please try again with a clearer image.')
+      setError(err.message || 'Failed to scan image. Make sure image is clear and orient it horizontally.')
       setStage('error')
     }
   }
 
-  const handleCopy = async () => {
+  const handleAiProcess = async (action: 'summarize' | 'clean' | 'format') => {
     if (!text) return
-    await navigator.clipboard.writeText(text)
+    setIsAiLoading(true)
+    setAiError(null)
+    setAiAction(action)
+    try {
+      const response = await fetch('/api/ai/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, action })
+      })
+      const data = await response.json()
+      if (data.success && data.text) {
+        setAiText(data.text)
+        setActiveView('ai')
+      } else {
+        setAiError(data.error || 'AI processing failed')
+      }
+    } catch (err: any) {
+      console.error('AI processing error:', err)
+      setAiError(err.message || 'An error occurred during AI processing')
+    } finally {
+      setIsAiLoading(false)
+    }
+  }
+
+  // Target text for spoken audio and all export formats
+  const displayedText = activeView === 'ai' && aiText ? aiText : text
+
+  const handleCopy = async () => {
+    if (!displayedText) return
+    await navigator.clipboard.writeText(displayedText)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   // --- AUDIO SYNTHESIS PLAYBACK ---
   const handlePlayAudio = () => {
-    if (!text) return
+    if (!displayedText) return
     if (isPlaying) {
       handleStopAudio()
       return
@@ -109,7 +212,7 @@ export default function ImageToTextPage() {
       synthRef.current = window.speechSynthesis
       window.speechSynthesis.cancel() // stop any active synthesis
 
-      const utterance = new SpeechSynthesisUtterance(text.substring(0, 1000)) // synthesize first 1000 chars safely
+      const utterance = new SpeechSynthesisUtterance(displayedText.substring(0, 1000)) // synthesize first 1000 chars safely
       utterance.onend = () => setIsPlaying(false)
       utterance.onerror = () => setIsPlaying(false)
       
@@ -130,16 +233,18 @@ export default function ImageToTextPage() {
   const baseName = file ? file.name.replace(/\.[^/.]+$/, '') : 'extracted_document'
 
   const exportToTxt = () => {
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    if (!displayedText) return
+    const blob = new Blob([displayedText], { type: 'text/plain;charset=utf-8' })
     downloadBlob(blob, `${baseName}.txt`)
   }
 
   const exportToDocx = async () => {
+    if (!displayedText) return
     setIsMediaLoading(true)
     setMediaStatus('Compiling Word document…')
     try {
       const { Document, Packer, Paragraph, TextRun } = await import('docx')
-      const paragraphs = text.split('\n').map((line) => {
+      const paragraphs = displayedText.split('\n').map((line) => {
         const trimmed = line.trim()
         return new Paragraph({ children: [new TextRun({ text: trimmed })] })
       })
@@ -156,6 +261,7 @@ export default function ImageToTextPage() {
   }
 
   const exportToPdf = async () => {
+    if (!displayedText) return
     setIsMediaLoading(true)
     setMediaStatus('Rendering PDF document…')
     try {
@@ -167,7 +273,7 @@ export default function ImageToTextPage() {
       
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(11)
-      const splitText = doc.splitTextToSize(text, 170)
+      const splitText = doc.splitTextToSize(displayedText, 170)
       doc.text(splitText, 20, 30)
       doc.save(`${baseName}.pdf`)
     } catch (err) {
@@ -179,12 +285,13 @@ export default function ImageToTextPage() {
   }
 
   const exportToExcel = async () => {
+    if (!displayedText) return
     setIsMediaLoading(true)
     setMediaStatus('Formatting Excel sheet…')
     try {
       const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
-      const rows = text.split('\n').map((line, idx) => ({ Line: idx + 1, Content: line }))
+      const rows = displayedText.split('\n').map((line, idx) => ({ Line: idx + 1, Content: line }))
       const ws = XLSX.utils.json_to_sheet(rows)
       XLSX.utils.book_append_sheet(wb, ws, 'Scanned Text')
       const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
@@ -199,6 +306,7 @@ export default function ImageToTextPage() {
   }
 
   const exportToPptx = async () => {
+    if (!displayedText) return
     setIsMediaLoading(true)
     setMediaStatus('Structuring PowerPoint slides…')
     try {
@@ -223,7 +331,7 @@ export default function ImageToTextPage() {
       cover.addText('ai2026 Image to Text presentation studio', { x: 1, y: 3.5, w: 8, fontSize: 16, color: '94A3B8' })
 
       // 2. Content slides (chunks of 6 lines per slide)
-      const lines = text.split('\n').filter(Boolean)
+      const lines = displayedText.split('\n').filter(Boolean)
       const chunkSize = 6
       for (let i = 0; i < lines.length; i += chunkSize) {
         const slideLines = lines.slice(i, i + chunkSize)
@@ -243,6 +351,7 @@ export default function ImageToTextPage() {
   }
 
   const exportToImage = async (format: 'jpeg' | 'tiff') => {
+    if (!displayedText) return
     setIsMediaLoading(true)
     setMediaStatus(`Drawing text to ${format.toUpperCase()} canvas…`)
     try {
@@ -250,7 +359,7 @@ export default function ImageToTextPage() {
       const ctx = canvas.getContext('2d')
       if (!ctx) return
       
-      const lines = text.split('\n')
+      const lines = displayedText.split('\n')
       canvas.width = 800
       canvas.height = Math.max(600, lines.length * 28 + 120)
       
@@ -290,7 +399,8 @@ export default function ImageToTextPage() {
   }
 
   const exportToSvg = () => {
-    const lines = text.split('\n')
+    if (!displayedText) return
+    const lines = displayedText.split('\n')
     const height = lines.length * 25 + 100
     let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 ${height}" width="800" height="${height}">\n`
     svgContent += `  <rect width="100%" height="100%" fill="#F8FAFC"/>\n`
@@ -312,7 +422,8 @@ export default function ImageToTextPage() {
   }
 
   const exportToSrt = () => {
-    const lines = text.split('\n').filter(Boolean)
+    if (!displayedText) return
+    const lines = displayedText.split('\n').filter(Boolean)
     let srtText = ''
     const padZero = (n: number, len: number = 2) => String(n).padStart(len, '0')
     const formatTime = (seconds: number) => {
@@ -337,6 +448,7 @@ export default function ImageToTextPage() {
 
   // Captures moving scrolling canvas presentation to export actual .mp4 / .mov / .avi / .wmv containers
   const exportToVideo = async (extension: string) => {
+    if (!displayedText) return
     setIsMediaLoading(true)
     setMediaStatus(`Assembling scrolling ${extension.toUpperCase()} video stream…`)
     
@@ -371,7 +483,7 @@ export default function ImageToTextPage() {
 
       let startTime = Date.now()
       const duration = 4000 // 4 seconds animation
-      const paragraphs = text.split('\n').filter(Boolean).slice(0, 8)
+      const paragraphs = displayedText.split('\n').filter(Boolean).slice(0, 8)
 
       const drawFrame = () => {
         const elapsed = Date.now() - startTime
@@ -474,192 +586,313 @@ export default function ImageToTextPage() {
 
         {stage === 'done' && text ? (
           /* Converted Dashboard State */
-          <div className="grid lg:grid-cols-3 gap-6 animate-fade-in-up">
-            
-            {/* Text Preview Column */}
-            <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-2xl overflow-hidden shadow-xl">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-                <div>
-                  <h2 className="text-white font-semibold">Extracted Document Text</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {text.split(/\s+/).filter(Boolean).length.toLocaleString()} words ·{' '}
-                    {text.length.toLocaleString()} characters
-                  </p>
-                </div>
+          (() => {
+            const activeWords = displayedText ? displayedText.split(/\s+/).filter(Boolean).length : 0
+            const activeChars = displayedText ? displayedText.length : 0
+
+            return (
+              <div className="grid lg:grid-cols-3 gap-6 animate-fade-in-up">
                 
-                {/* Spoken Playback Trigger */}
-                <button
-                  onClick={handlePlayAudio}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition ${
-                    isPlaying 
-                      ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                      : 'bg-white/5 border-white/15 text-gray-300 hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  {isPlaying ? (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                      Stop Listening
-                    </>
-                  ) : (
-                    <>
-                      <span>🔊</span>
-                      Listen Out Loud
-                    </>
-                  )}
-                </button>
-              </div>
+                {/* Text Preview Column */}
+                <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-2xl overflow-hidden shadow-xl bg-slate-950/20">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 py-4 border-b border-white/10 bg-white/[0.02]">
+                    <div>
+                      <h2 className="text-white font-semibold">
+                        {activeView === 'ai' ? `AI Processed Text (${aiAction})` : 'Extracted Document Text'}
+                      </h2>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {activeWords.toLocaleString()} words ·{' '}
+                        {activeChars.toLocaleString()} characters
+                      </p>
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Spoken Playback Trigger */}
+                      <button
+                        onClick={handlePlayAudio}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition ${
+                          isPlaying 
+                            ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                            : 'bg-white/5 border-white/15 text-gray-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        {isPlaying ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                            Stop Listening
+                          </>
+                        ) : (
+                          <>
+                            <span>🔊</span>
+                            Listen Out Loud
+                          </>
+                        )}
+                      </button>
 
-              <div className="p-5 h-96 lg:h-[500px] overflow-y-auto">
-                <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
-                  {text}
-                </pre>
-              </div>
-            </div>
-
-            {/* Actions and Export Column */}
-            <div className="flex flex-col gap-5">
-              
-              {/* Copy & General Action Card */}
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 shadow-lg">
-                <h3 className="text-white font-semibold mb-4">Quick Operations</h3>
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={handleCopy}
-                    className={`flex items-center justify-center gap-2 w-full py-3 px-4 font-semibold rounded-xl border transition ${
-                      copied
-                        ? 'bg-green-500/20 border-green-500/40 text-green-300'
-                        : 'bg-white/5 border-white/20 text-white hover:bg-white/10'
-                    }`}
-                  >
-                    {copied ? 'Copied to Clipboard!' : 'Copy Raw Text'}
-                  </button>
-
-                  <button
-                    onClick={handleReset}
-                    className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/20 text-white font-semibold rounded-xl hover:bg-white/10 transition"
-                  >
-                    Convert Another Image
-                  </button>
-                </div>
-              </div>
-
-              {/* Dynamic Multi-Format Export Suite */}
-              <div className="bg-gradient-to-br from-[#1b2234] to-[#121724] border border-orange-500/25 rounded-2xl p-5 shadow-xl shadow-black/30 relative">
-                
-                {/* Media Loading Overlay */}
-                {isMediaLoading && (
-                  <div className="absolute inset-0 bg-black/80 rounded-2xl flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
-                    <Spinner size="md" color="orange" />
-                    <p className="text-white font-semibold mt-4 text-sm">{mediaStatus}</p>
-                    <p className="text-xs text-gray-400 mt-2">Processing 100% locally in your browser…</p>
+                      {/* AI View Toggles */}
+                      {aiText && (
+                        <div className="flex bg-black/40 border border-white/10 p-1 rounded-xl">
+                          <button
+                            onClick={() => setActiveView('original')}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                              activeView === 'original'
+                                ? 'bg-white/10 text-white'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Original
+                          </button>
+                          <button
+                            onClick={() => setActiveView('ai')}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                              activeView === 'ai'
+                                ? 'bg-orange-500/25 text-orange-300 border border-orange-500/30'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            AI Version
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
 
-                <h3 className="text-white font-bold text-base mb-1 flex items-center gap-2">
-                  <span className="text-orange-400">⚡</span> SaaS Export Suite
-                </h3>
-                <p className="text-gray-400 text-xs mb-4">Choose from professional download formats compiled client-side:</p>
+                  <div className="p-5 h-96 lg:h-[500px] overflow-y-auto relative">
+                    {/* Glowing AI Spinner */}
+                    {isAiLoading && (
+                      <div className="absolute inset-0 bg-black/85 backdrop-blur-[2px] flex flex-col items-center justify-center p-6 text-center animate-fade-in z-10">
+                        <Spinner size="md" color="orange" />
+                        <p className="text-orange-400 font-bold text-sm mt-4 tracking-wide uppercase">AI Assistant active</p>
+                        <p className="text-gray-400 text-xs mt-1">Proofreading, correcting typos, and refining text with Mistral AI…</p>
+                      </div>
+                    )}
 
-                {/* Sub-groups */}
-                <div className="space-y-4">
+                    {displayedText ? (
+                      <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+                        {displayedText}
+                      </pre>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-center">
+                        <p className="text-gray-500">No preview text available.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Actions and Export Column */}
+                <div className="flex flex-col gap-5">
                   
-                  {/* Documents Section */}
-                  <div>
-                    <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">Documents</h4>
-                    <div className="grid grid-cols-2 gap-2">
+                  {/* Copy & General Action Card */}
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-5 shadow-lg">
+                    <h3 className="text-white font-semibold mb-4">Quick Operations</h3>
+                    <div className="flex flex-col gap-3">
                       <button
-                        onClick={exportToTxt}
-                        className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
+                        onClick={handleCopy}
+                        className={`flex items-center justify-center gap-2 w-full py-3 px-4 font-semibold rounded-xl border transition ${
+                          copied
+                            ? 'bg-green-500/20 border-green-500/40 text-green-300'
+                            : 'bg-white/5 border-white/20 text-white hover:bg-white/10'
+                        }`}
                       >
-                        📄 TXT File
+                        {copied ? 'Copied to Clipboard!' : 'Copy Active Text'}
                       </button>
+
                       <button
-                        onClick={exportToDocx}
-                        className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
+                        onClick={handleReset}
+                        className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/20 text-white font-semibold rounded-xl hover:bg-white/10 transition"
                       >
-                        📝 Word
-                      </button>
-                      <button
-                        onClick={exportToPdf}
-                        className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
-                      >
-                        📕 PDF
-                      </button>
-                      <button
-                        onClick={exportToExcel}
-                        className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
-                      >
-                        📊 Excel
-                      </button>
-                      <button
-                        onClick={exportToPptx}
-                        className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5 col-span-2 justify-center"
-                      >
-                        🎨 PowerPoint Slide Deck
+                        Convert Another Image
                       </button>
                     </div>
                   </div>
 
-                  {/* Visual Layouts */}
-                  <div>
-                    <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">Graphics & Vectors</h4>
-                    <div className="grid grid-cols-3 gap-1.5">
+                  {/* SaaS AI Assistant Panel */}
+                  <div className="bg-gradient-to-br from-[#241712] to-[#170e0b] border border-orange-500/30 rounded-2xl p-5 shadow-xl shadow-orange-500/5 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full blur-3xl pointer-events-none" />
+                    
+                    <h3 className="text-white font-bold text-base mb-1 flex items-center gap-2">
+                      <span className="text-orange-400 animate-pulse">✨</span> AI Assistant
+                    </h3>
+                    <p className="text-gray-400 text-xs mb-4">SaaS document processing powered by Mistral AI.</p>
+
+                    {aiError && (
+                      <div className="mb-3 px-3 py-2 bg-red-900/30 border border-red-500/30 rounded-xl text-xs text-red-300">
+                        {aiError}
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-2">
                       <button
-                        onClick={() => exportToImage('jpeg')}
-                        className="py-2 px-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-gray-200 hover:bg-white/10 text-center transition"
+                        disabled={isAiLoading || !text}
+                        onClick={() => handleAiProcess('clean')}
+                        className={`flex items-center gap-2.5 py-2.5 px-3 rounded-xl border text-xs font-semibold text-left transition ${
+                          aiAction === 'clean' && isAiLoading
+                            ? 'bg-orange-500/25 border-orange-500/40 text-orange-300'
+                            : 'bg-white/5 border-white/10 text-gray-200 hover:bg-white/10 disabled:opacity-50'
+                        }`}
                       >
-                        JPEG
+                        <span>🧹</span>
+                        <div className="flex-1">
+                          <div>Clean OCR Typos</div>
+                          <div className="text-[9px] text-gray-500 font-normal">Proofread spelling errors and typos</div>
+                        </div>
+                        {aiAction === 'clean' && isAiLoading && <Spinner size="sm" color="orange" />}
                       </button>
+
                       <button
-                        onClick={() => exportToImage('tiff')}
-                        className="py-2 px-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-gray-200 hover:bg-white/10 text-center transition"
+                        disabled={isAiLoading || !text}
+                        onClick={() => handleAiProcess('summarize')}
+                        className={`flex items-center gap-2.5 py-2.5 px-3 rounded-xl border text-xs font-semibold text-left transition ${
+                          aiAction === 'summarize' && isAiLoading
+                            ? 'bg-orange-500/25 border-orange-500/40 text-orange-300'
+                            : 'bg-white/5 border-white/10 text-gray-200 hover:bg-white/10 disabled:opacity-50'
+                        }`}
                       >
-                        TIFF
+                        <span>📊</span>
+                        <div className="flex-1">
+                          <div>Summarize Document</div>
+                          <div className="text-[9px] text-gray-500 font-normal">Create clear executive bullets</div>
+                        </div>
+                        {aiAction === 'summarize' && isAiLoading && <Spinner size="sm" color="orange" />}
                       </button>
+
                       <button
-                        onClick={exportToSvg}
-                        className="py-2 px-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-gray-200 hover:bg-white/10 text-center transition"
+                        disabled={isAiLoading || !text}
+                        onClick={() => handleAiProcess('format')}
+                        className={`flex items-center gap-2.5 py-2.5 px-3 rounded-xl border text-xs font-semibold text-left transition ${
+                          aiAction === 'format' && isAiLoading
+                            ? 'bg-orange-500/25 border-orange-500/40 text-orange-300'
+                            : 'bg-white/5 border-white/10 text-gray-200 hover:bg-white/10 disabled:opacity-50'
+                        }`}
                       >
-                        SVG
+                        <span>🏢</span>
+                        <div className="flex-1">
+                          <div>Professional Formatting</div>
+                          <div className="text-[9px] text-gray-500 font-normal">Structure clean layout and headings</div>
+                        </div>
+                        {aiAction === 'format' && isAiLoading && <Spinner size="sm" color="orange" />}
                       </button>
                     </div>
                   </div>
 
-                  {/* Subtitles & Multimedia Containers */}
-                  <div>
-                    <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">Subtitles & Video Wrapper</h4>
-                    <div className="space-y-2">
-                      <button
-                        onClick={exportToSrt}
-                        className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center justify-between"
-                      >
-                        <span>🎬 SRT Subtitle Track</span>
-                        <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/20">SRT</span>
-                      </button>
+                  {/* Dynamic Multi-Format Export Suite */}
+                  <div className="bg-gradient-to-br from-[#1b2234] to-[#121724] border border-orange-500/25 rounded-2xl p-5 shadow-xl shadow-black/30 relative">
+                    
+                    {/* Media Loading Overlay */}
+                    {isMediaLoading && (
+                      <div className="absolute inset-0 bg-black/85 rounded-2xl flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
+                        <Spinner size="md" color="orange" />
+                        <p className="text-white font-semibold mt-4 text-sm">{mediaStatus}</p>
+                        <p className="text-xs text-gray-400 mt-2">Compiling document locally in your browser…</p>
+                      </div>
+                    )}
+
+                    <h3 className="text-white font-bold text-base mb-1 flex items-center gap-2">
+                      <span className="text-orange-400">⚡</span> SaaS Export Suite
+                    </h3>
+                    <p className="text-gray-400 text-xs mb-4">Choose from professional download formats compiled client-side:</p>
+
+                    {/* Sub-groups */}
+                    <div className="space-y-4">
                       
-                      <div className="bg-white/5 border border-white/10 rounded-lg p-2.5 space-y-2">
-                        <div className="text-[9px] text-gray-400 font-semibold tracking-wider">COMPILE VIDEO WRAPPER:</div>
-                        <div className="grid grid-cols-4 gap-1">
-                          {['mp4', 'mov', 'avi', 'wmv'].map((ext) => (
-                            <button
-                              key={ext}
-                              onClick={() => exportToVideo(ext)}
-                              className="py-1.5 bg-orange-500/10 hover:bg-orange-500/25 border border-orange-500/20 rounded text-[9px] font-bold text-orange-300 text-center transition"
-                            >
-                              .{ext.toUpperCase()}
-                            </button>
-                          ))}
+                      {/* Documents Section */}
+                      <div>
+                        <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">Documents</h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={exportToTxt}
+                            className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
+                          >
+                            📄 TXT File
+                          </button>
+                          <button
+                            onClick={exportToDocx}
+                            className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
+                          >
+                            📝 Word
+                          </button>
+                          <button
+                            onClick={exportToPdf}
+                            className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
+                          >
+                            📕 PDF
+                          </button>
+                          <button
+                            onClick={exportToExcel}
+                            className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5"
+                          >
+                            📊 Excel
+                          </button>
+                          <button
+                            onClick={exportToPptx}
+                            className="py-2.5 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center gap-1.5 col-span-2 justify-center"
+                          >
+                            🎨 PowerPoint Slide Deck
+                          </button>
                         </div>
                       </div>
+
+                      {/* Visual Layouts */}
+                      <div>
+                        <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">Graphics & Vectors</h4>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            onClick={() => exportToImage('jpeg')}
+                            className="py-2 px-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-gray-200 hover:bg-white/10 text-center transition"
+                          >
+                            JPEG
+                          </button>
+                          <button
+                            onClick={() => exportToImage('tiff')}
+                            className="py-2 px-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-gray-200 hover:bg-white/10 text-center transition"
+                          >
+                            TIFF
+                          </button>
+                          <button
+                            onClick={exportToSvg}
+                            className="py-2 px-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-gray-200 hover:bg-white/10 text-center transition"
+                          >
+                            SVG
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Subtitles & Multimedia Containers */}
+                      <div>
+                        <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2">Subtitles & Video Wrapper</h4>
+                        <div className="space-y-2">
+                          <button
+                            onClick={exportToSrt}
+                            className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-gray-200 hover:bg-white/10 transition flex items-center justify-between"
+                          >
+                            <span>🎬 SRT Subtitle Track</span>
+                            <span className="text-[9px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/20">SRT</span>
+                          </button>
+                          
+                          <div className="bg-white/5 border border-white/10 rounded-lg p-2.5 space-y-2">
+                            <div className="text-[9px] text-gray-400 font-semibold tracking-wider">COMPILE VIDEO WRAPPER:</div>
+                            <div className="grid grid-cols-4 gap-1">
+                              {['mp4', 'mov', 'avi', 'wmv'].map((ext) => (
+                                <button
+                                  key={ext}
+                                  onClick={() => exportToVideo(ext)}
+                                  className="py-1.5 bg-orange-500/10 hover:bg-orange-500/25 border border-orange-500/20 rounded text-[9px] font-bold text-orange-300 text-center transition"
+                                >
+                                  .{ext.toUpperCase()}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
                     </div>
                   </div>
 
                 </div>
               </div>
-
-            </div>
-          </div>
+            )
+          })()
         ) : (
           /* File Upload / Scanner UI State */
           <div className="max-w-2xl mx-auto">
@@ -723,31 +956,68 @@ export default function ImageToTextPage() {
 
             {/* File loaded, waiting to trigger scan */}
             {file && stage === 'file_selected' && (
-              <div className="space-y-5">
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col md:flex-row gap-4 items-center">
+              <div className="space-y-6">
+                
+                {/* Visual Preview Box with dynamic transformations */}
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden shadow-xl">
+                  {/* Grid background decoration */}
+                  <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-orange-500/5 via-transparent to-transparent pointer-events-none" />
                   
                   {previewUrl && (
-                    <img 
-                      src={previewUrl} 
-                      alt="Upload Preview" 
-                      className="w-24 h-24 object-cover rounded-xl border border-white/10 bg-slate-950"
-                    />
+                    <div className="relative max-h-80 w-full flex items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-slate-950 p-4">
+                      <img 
+                        src={previewUrl} 
+                        alt="Upload Preview" 
+                        style={{ 
+                          transform: `rotate(${rotation}deg)` 
+                        }}
+                        className={`max-h-64 object-contain transition-all duration-300 rounded shadow-2xl ${
+                          isEnhanced ? 'grayscale contrast-[300%] brightness-[105%]' : ''
+                        }`}
+                      />
+                    </div>
                   )}
 
-                  <div className="flex-1 min-w-0 text-center md:text-left">
-                    <p className="text-white font-semibold truncate">{file.name}</p>
-                    <p className="text-gray-400 text-sm">{(file.size / 1024).toFixed(1)} KB • Image</p>
+                  <div className="mt-4 text-center">
+                    <p className="text-white font-semibold truncate max-w-sm">{file.name}</p>
+                    <p className="text-gray-400 text-xs mt-0.5">{(file.size / 1024).toFixed(1)} KB • Image format</p>
                   </div>
+                </div>
+
+                {/* SaaS Pre-processing Toolbar */}
+                <div className="bg-gradient-to-br from-[#1b1c24] to-[#121319] border border-orange-500/20 rounded-2xl p-4 shadow-lg flex flex-wrap gap-3 items-center justify-between">
+                  <div className="text-xs font-bold text-gray-400 tracking-wider uppercase">⚙️ PRE-PROCESS TOOLBAR</div>
                   
-                  <button
-                    onClick={handleReset}
-                    className="text-gray-500 hover:text-gray-300 transition"
-                    aria-label="Remove image"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRotation((prev) => (prev + 90) % 360)}
+                      className="py-2 px-3.5 bg-white/5 border border-white/10 text-white font-semibold rounded-xl hover:bg-white/10 transition text-xs flex items-center gap-1.5"
+                    >
+                      <span>🔄</span> Rotate 90°
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setIsEnhanced((prev) => !prev)}
+                      className={`py-2 px-3.5 border font-semibold rounded-xl transition text-xs flex items-center gap-1.5 ${
+                        isEnhanced 
+                          ? 'bg-orange-500/25 border-orange-500/40 text-orange-300'
+                          : 'bg-white/5 border-white/10 text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <span>🔆</span> {isEnhanced ? 'Contrast: Enhanced' : 'Enhance Contrast'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setRotation(0); setIsEnhanced(false); }}
+                      className="py-2 px-3 bg-white/5 border border-white/10 text-gray-400 hover:text-white rounded-xl transition text-xs"
+                      title="Reset rotation & contrast booster"
+                    >
+                      Reset
+                    </button>
+                  </div>
                 </div>
 
                 <button
