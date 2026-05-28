@@ -63,12 +63,16 @@ export default function PdfToTextPage() {
     }
 
     const res = await convertPdfToText(file)
-    setProgress(100)
 
     if (res.success && res.data) {
+      setProgress(100)
       setResult(res.data)
       setStage('done')
+    } else if (res.error?.includes('OCR is required') || res.error?.includes('No text could be extracted')) {
+      // Scanned PDF: Automatically trigger high-accuracy Browser OCR in background
+      await runClientSideOcr()
     } else {
+      setProgress(100)
       setError(res.error ?? 'Conversion failed. Please try again.')
       setStage('error')
     }
