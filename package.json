@@ -19,7 +19,8 @@
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^3.11.174",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

@@ -60,3 +60,12 @@ html { scroll-behavior: smooth; }
   background: rgba(96,165,250,0.08) !important;
   transform: scale(1.01);
 }
+
+@keyframes scan {
+  0% { transform: translateY(0); opacity: 0.2; }
+  50% { opacity: 0.8; }
+  100% { transform: translateY(180px); opacity: 0.2; }
+}
+.animate-scan {
+  animation: scan 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
