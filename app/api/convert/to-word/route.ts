@@ -48,9 +48,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error('PDF to Word conversion error:', error);
+    const status = error.message?.includes('No text could be extracted') || error.message?.includes('OCR is required') ? 422 : 500;
     return NextResponse.json(
       { error: error.message || 'Failed to convert PDF to Word' },
-      { status: 500 }
+      { status }
     );
   }
 }

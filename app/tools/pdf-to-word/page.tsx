@@ -7,13 +7,21 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Spinner } from '@/components/ui/Spinner'
 import { convertPdfToWord, downloadBlob, type WordResult } from '@/lib/services/converterService'
 
-type Stage = 'idle' | 'file_selected' | 'preparing' | 'converting' | 'generating' | 'done' | 'error'
+type Stage = 'idle' | 'file_selected' | 'preparing' | 'converting' | 'generating' | 'ocr_processing' | 'done' | 'error'
 
 const STAGES = [
   { key: 'preparing' as Stage,  label: 'Preparing file…',   progress: 15 },
   { key: 'converting' as Stage, label: 'Converting pages…', progress: 50 },
   { key: 'generating' as Stage, label: 'Generating DOCX…',  progress: 85 },
 ]
+
+interface OcrProgress {
+  stage: 'idle' | 'loading_pdfjs' | 'rendering_page' | 'running_ocr' | 'generating_docx'
+  current: number
+  total: number
+  percent: number
+  label: string
+}
 
 export default function PdfToWordPage() {
   const [file, setFile]           = useState<File | null>(null)
@@ -23,6 +31,14 @@ export default function PdfToWordPage() {
   const [result, setResult]       = useState<WordResult | null>(null)
   const [error, setError]         = useState<string | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
+
+  const [ocrProgress, setOcrProgress] = useState<OcrProgress>({
+    stage: 'idle',
+    current: 0,
+    total: 0,
+    percent: 0,
+    label: '',
+  })
 
   const handleFileSelect = useCallback((f: File) => {
     setFile(f); setStage('file_selected')
@@ -48,12 +64,142 @@ export default function PdfToWordPage() {
     }
   }
 
+  const runClientSideOcr = async () => {
+    if (!file) return
+    setError(null)
+    setStage('ocr_processing')
+    setOcrProgress({
+      stage: 'loading_pdfjs',
+      current: 0,
+      total: 0,
+      percent: 0,
+      label: 'Loading high-accuracy OCR engine…',
+    })
+
+    try {
+      // 1. Load PDF.js from CDN dynamically
+      const pdfjs = await new Promise<any>((resolve, reject) => {
+        if ((window as any).pdfjsLib) {
+          resolve((window as any).pdfjsLib)
+          return
+        }
+        const script = document.createElement('script')
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+        script.onload = () => resolve((window as any).pdfjsLib)
+        script.onerror = () => reject(new Error('Failed to load local PDF rendering component.'))
+        document.body.appendChild(script)
+      })
+
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+      // 2. Load PDF file data
+      setOcrProgress((prev) => ({ ...prev, label: 'Reading PDF pages…' }))
+      const arrayBuffer = await file.arrayBuffer()
+      const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
+      const pdf = await loadingTask.promise
+      const total = pdf.numPages
+
+      setOcrProgress((prev) => ({
+        ...prev,
+        total,
+        label: `Parsed document successfully (${total} pages found). Initializing OCR engine…`,
+      }))
+
+      // 3. Import Tesseract.js dynamically
+      const Tesseract = (await import('tesseract.js')).default
+
+      let accumulatedText = ''
+
+      for (let pageNum = 1; pageNum <= total; pageNum++) {
+        setOcrProgress((prev) => ({
+          ...prev,
+          stage: 'rendering_page',
+          current: pageNum,
+          percent: 0,
+          label: `Rendering Page ${pageNum} of ${total} to high-resolution image…`,
+        }))
+
+        // Render page onto high-resolution canvas
+        const page = await pdf.getPage(pageNum)
+        const viewport = page.getViewport({ scale: 2.0 })
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        canvas.height = viewport.height
+        canvas.width = viewport.width
+
+        if (!context) {
+          throw new Error('Canvas render context error.')
+        }
+
+        await page.render({ canvasContext: context, viewport }).promise
+        const dataUrl = canvas.toDataURL('image/png')
+
+        setOcrProgress((prev) => ({
+          ...prev,
+          stage: 'running_ocr',
+          label: `Scanning characters on Page ${pageNum} of ${total}…`,
+        }))
+
+        // Run OCR on the page image
+        const ocrResult = await Tesseract.recognize(dataUrl, 'eng', {
+          logger: (m: any) => {
+            if (m.status === 'recognizing text') {
+              const pct = Math.round(m.progress * 100)
+              setOcrProgress((prev) => ({
+                ...prev,
+                percent: pct,
+                label: `Scanning characters on Page ${pageNum} of ${total}… (${pct}%)`,
+              }))
+            }
+          },
+        })
+
+        accumulatedText += ocrResult.data.text + `\n\n--- Page ${pageNum} Break ---\n\n`
+      }
+
+      // 4. Generate the DOCX file client-side using docx
+      setOcrProgress((prev) => ({
+        ...prev,
+        stage: 'generating_docx',
+        percent: 90,
+        label: 'Generating DOCX file…',
+      }))
+
+      const { Document, Packer, Paragraph, TextRun } = await import('docx')
+
+      const paragraphs = accumulatedText.split('\n').map((line) => {
+        const trimmed = line.trim()
+        if (!trimmed) return new Paragraph({ children: [] })
+        if (trimmed.startsWith('--- Page') || trimmed.includes('Break ---')) {
+          return new Paragraph({
+            children: [new TextRun({ text: '─'.repeat(40), color: 'AAAAAA' })],
+          })
+        }
+        return new Paragraph({ children: [new TextRun({ text: trimmed })] })
+      })
+
+      const doc = new Document({ sections: [{ children: paragraphs }] })
+      const docxBlob = await Packer.toBlob(doc)
+
+      const baseName = file.name.replace(/\.pdf$/i, '')
+      setResult({
+        blob: docxBlob,
+        fileName: `${baseName}.docx`,
+      })
+      setStage('done')
+    } catch (err: any) {
+      console.error('OCR failed:', err)
+      setError(err.message || 'Browser-side OCR extraction failed. Please try again.')
+      setStage('error')
+    }
+  }
+
   const handleReset = () => {
     setFile(null); setStage('idle'); setProgress(0)
     setResult(null); setError(null); setFileError(null)
   }
 
-  const isProcessing = ['preparing', 'converting', 'generating'].includes(stage)
+  const isProcessing = ['preparing', 'converting', 'generating', 'ocr_processing'].includes(stage)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-[#2d1b4e] to-slate-900">
@@ -84,23 +230,59 @@ export default function PdfToWordPage() {
           <p className="text-gray-400 text-lg">Convert PDFs to editable Word documents</p>
         </div>
 
-        {/* Error */}
-        {(error || fileError) && (
-          <div className="flex items-start gap-3 bg-red-900/50 border border-red-500/40 rounded-xl px-5 py-4 mb-6">
-            <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <div className="flex-1">
-              <p className="text-red-300 font-semibold">Error</p>
-              <p className="text-red-400 text-sm mt-0.5">{error ?? fileError}</p>
-            </div>
-            <button onClick={() => { setError(null); setFileError(null) }} className="text-red-400 hover:text-red-200">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
+        {/* Error banner / OCR recommendation */}
+        {(() => {
+          const isScannedError = error?.includes('OCR is required') || error?.includes('No text could be extracted')
+          if (isScannedError) {
+            return (
+              <div className="bg-gradient-to-br from-[#2a1a3a] to-[#120a1c] border border-purple-500/30 rounded-2xl p-6 mb-8 text-center animate-fade-in-up shadow-xl shadow-black/30">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500/10 to-pink-500/10 border border-purple-500/20 text-3xl mb-4">
+                  ✨
+                </div>
+                <h3 className="text-white font-bold text-xl mb-2">OCR Conversion Available</h3>
+                <p className="text-gray-300 text-sm max-w-md mx-auto mb-6 leading-relaxed">
+                  This PDF appears to be a scanned document or image-based. We can scan it using high-accuracy **local OCR** in your browser and build an editable Word document from it!
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center max-w-sm mx-auto">
+                  <button
+                    onClick={runClientSideOcr}
+                    className="flex-1 py-3 px-5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold rounded-xl shadow-lg shadow-purple-500/25 transition text-sm flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    Run Browser OCR
+                  </button>
+                  <button
+                    onClick={handleReset}
+                    className="flex-1 py-3 px-5 bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 font-semibold rounded-xl transition text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )
+          }
+          if (error || fileError) {
+            return (
+              <div className="flex items-start gap-3 bg-red-900/50 border border-red-500/40 rounded-xl px-5 py-4 mb-6">
+                <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div className="flex-1">
+                  <p className="text-red-300 font-semibold">Error</p>
+                  <p className="text-red-400 text-sm mt-0.5">{error ?? fileError}</p>
+                </div>
+                <button onClick={() => { setError(null); setFileError(null) }} className="text-red-400 hover:text-red-200">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )
+          }
+          return null
+        })()}
 
         {/* DONE */}
         {stage === 'done' && result ? (
@@ -146,7 +328,7 @@ export default function PdfToWordPage() {
             </div>
           </div>
 
-        ) : isProcessing ? (
+        ) : isProcessing && stage !== 'ocr_processing' ? (
           /* Processing */
           <div className="bg-white/5 border border-white/10 rounded-2xl p-10 text-center">
             <div className="flex justify-center mb-6">
@@ -162,6 +344,38 @@ export default function PdfToWordPage() {
               ))}
             </div>
             <ProgressBar progress={progress} color="purple" />
+          </div>
+
+        ) : stage === 'ocr_processing' ? (
+          /* OCR Processing UI */
+          <div className="bg-gradient-to-br from-[#1d122d] to-[#0f0a18] border border-purple-500/20 rounded-2xl p-10 text-center relative overflow-hidden shadow-2xl glass">
+            {/* Laser scan line anim */}
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-purple-500 via-pink-400 to-purple-500 animate-scan" />
+            
+            <div className="flex justify-center mb-6">
+              <div className="relative w-16 h-16 flex items-center justify-center bg-purple-500/10 border border-purple-500/30 rounded-2xl text-3xl shadow-lg shadow-purple-500/10 animate-pulse">
+                🔍
+              </div>
+            </div>
+            <h3 className="text-white font-bold text-xl mb-1">OCR Scan Active</h3>
+            <p className="text-purple-400 text-xs font-bold tracking-wider uppercase mb-4">Processing Locally In-Browser</p>
+            <p className="text-gray-300 text-sm max-w-md mx-auto mb-6">
+              {ocrProgress.label}
+            </p>
+
+            {ocrProgress.total > 0 && (
+              <div className="text-xs text-gray-500 mb-8 font-medium">
+                Processing Page <span className="text-white font-bold">{ocrProgress.current}</span> of <span className="text-white font-bold">{ocrProgress.total}</span>
+              </div>
+            )}
+            
+            <div className="max-w-md mx-auto">
+              <ProgressBar progress={ocrProgress.percent} color="purple" />
+              <div className="flex justify-between text-[10px] text-gray-500 mt-2 font-mono tracking-wider">
+                <span>PROGRESS</span>
+                <span>{ocrProgress.percent}%</span>
+              </div>
+            </div>
           </div>
 
         ) : !file ? (

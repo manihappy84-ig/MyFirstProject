@@ -77,6 +77,9 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
  */
 export async function convertPDFToWord(buffer: Buffer): Promise<Buffer> {
   const text = await extractTextFromPDF(buffer)
+  if (!text || text.trim().length === 0) {
+    throw new Error('No text could be extracted. This PDF may be image-based or scanned. OCR is required for scanned PDFs.')
+  }
   return buildDocx(text)
 }
 
