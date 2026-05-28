@@ -291,8 +291,46 @@ export default function ImageToTextPage() {
     try {
       const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
-      const rows = displayedText.split('\n').map((line, idx) => ({ Line: idx + 1, Content: line }))
+      
+      // Filter out empty rows and lines with only whitespace/symbols
+      const lines = displayedText.split('\n')
+        .map(line => line.trim())
+        .filter(line => {
+          if (!line) return false
+          // Keep lines that have at least one alphanumeric character
+          return /[a-zA-Z0-9]/.test(line)
+        })
+
+      const rows = lines.map((line, idx) => {
+        // Clean up markdown headers, bold weights, bullet items, and emoji noise
+        let cleanedContent = line
+          .replace(/^\s*#+\s+/, '') // strip markdown header like ###
+          .replace(/\s*\*{2,}\s*/g, '') // strip bold markers **
+          .replace(/^\s*[-*+•✓]\s+/, '') // strip list bullet prefixes
+          .trim()
+
+        // Strip redundant leading numbers if they duplicate our Excel sequence (e.g., "6 - Sanskrit" -> "Sanskrit")
+        cleanedContent = cleanedContent.replace(/^\d+[-.\s\u2013\u2014]+\s*/, '').trim()
+
+        // Remove phone or email emojis for a clean corporate appearance
+        cleanedContent = cleanedContent.replace(/^[\uD83D\uDCDE\u260E\u2706\u261E]\s*/, '')
+
+        return {
+          'S.No.': idx + 1,
+          'Extracted Content': cleanedContent
+        }
+      })
+
       const ws = XLSX.utils.json_to_sheet(rows)
+      
+      // Auto-fit column sizes to ensure premium layout with no text clipping
+      const maxLenNo = Math.max('S.No.'.length, String(rows.length).length)
+      const maxLenText = Math.max('Extracted Content'.length, ...rows.map(r => r['Extracted Content'].length))
+      ws['!cols'] = [
+        { wch: maxLenNo + 4 },
+        { wch: Math.min(100, maxLenText + 4) }
+      ]
+
       XLSX.utils.book_append_sheet(wb, ws, 'Scanned Text')
       const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
       const blob = new Blob([wbout], { type: 'application/octet-stream' })
