@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.MISTRAL_API_KEY;
+    const apiKey = process.env.MISTRAL_API_KEY || process.env.MISTRAL || process.env.Mistral || process.env.mistral;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'Mistral API key is not configured on the server. Please set MISTRAL_API_KEY in your environment.' },
+        { error: 'Mistral API key is not configured on the server. Please set MISTRAL_API_KEY or Mistral in your Vercel Environment Variables.' },
         { status: 500 }
       );
     }
