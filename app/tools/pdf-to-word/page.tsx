@@ -41,6 +41,73 @@ export default function PdfToWordPage() {
     label: '',
   })
 
+  // AI Assistant states
+  const [aiText, setAiText] = useState<string | null>(null)
+  const [isAiLoading, setIsAiLoading] = useState(false)
+  const [activeView, setActiveView] = useState<'original' | 'ai'>('original')
+  const [aiAction, setAiAction] = useState<'summarize' | 'clean' | 'format' | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
+
+  const handleAiProcess = async (action: 'summarize' | 'clean' | 'format') => {
+    if (!result?.text) return
+    setIsAiLoading(true)
+    setAiError(null)
+    setAiAction(action)
+    try {
+      const response = await fetch('/api/ai/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: result.text, action })
+      })
+      const data = await response.json()
+      if (data.success && data.text) {
+        setAiText(data.text)
+        setActiveView('ai')
+      } else {
+        setAiError(data.error || 'AI processing failed')
+      }
+    } catch (err: any) {
+      console.error('AI processing error:', err)
+      setAiError(err.message || 'An error occurred during AI processing')
+    } finally {
+      setIsAiLoading(false)
+    }
+  }
+
+  const generateDocxBlob = async (text: string) => {
+    const { Document, Packer, Paragraph, TextRun } = await import('docx')
+    const paragraphs = text.split('\n').map((line) => {
+      const trimmed = line.trim()
+      if (!trimmed) return new Paragraph({ children: [] })
+      if (trimmed.startsWith('--- Page') || trimmed.includes('Break ---')) {
+        return new Paragraph({
+          children: [new TextRun({ text: '─'.repeat(40), color: 'AAAAAA' })],
+        })
+      }
+      return new Paragraph({ children: [new TextRun({ text: trimmed })] })
+    })
+    const doc = new Document({ sections: [{ children: paragraphs }] })
+    return Packer.toBlob(doc)
+  }
+
+  const handleDownload = async () => {
+    if (!result) return
+    if (activeView === 'ai' && aiText) {
+      setIsAiLoading(true)
+      try {
+        const blob = await generateDocxBlob(aiText)
+        const base = file?.name.replace(/\.pdf$/i, '') || 'document'
+        downloadBlob(blob, `${base}_ai_${aiAction}.docx`)
+      } catch (err) {
+        console.error('Failed to compile AI Word document:', err)
+      } finally {
+        setIsAiLoading(false)
+      }
+    } else {
+      downloadBlob(result.blob, result.fileName)
+    }
+  }
+
   const handleFileSelect = useCallback((f: File) => {
     setFile(f); setStage('file_selected')
     setError(null); setFileError(null); setResult(null)
@@ -208,11 +275,14 @@ export default function PdfToWordPage() {
   const handleReset = () => {
     setFile(null); setStage('idle'); setProgress(0)
     setResult(null); setError(null); setFileError(null)
+    setAiText(null); setIsAiLoading(false)
+    setActiveView('original'); setAiAction(null); setAiError(null)
   }
 
   const handleCopy = async () => {
-    if (!result?.text) return
-    await navigator.clipboard.writeText(result.text)
+    const textToCopy = activeView === 'ai' && aiText ? aiText : result?.text
+    if (!textToCopy) return
+    await navigator.clipboard.writeText(textToCopy)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -302,120 +372,225 @@ export default function PdfToWordPage() {
           return null
         })()}
 
-        {/* ── DONE: split layout ── */}
         {stage === 'done' && result ? (
-          <div className="grid lg:grid-cols-3 gap-6 animate-fade-in-up">
-            {/* Text preview */}
-            <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-2xl overflow-hidden animate-fade-in-up">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-                <div>
-                  <h2 className="text-white font-semibold">Extracted Word Content</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {result.wordCount ? result.wordCount.toLocaleString() : '0'} words ·{' '}
-                    {result.charCount ? result.charCount.toLocaleString() : '0'} characters
-                  </p>
-                </div>
-                <span className="flex items-center gap-1 text-xs text-green-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Ready
-                </span>
-              </div>
-              <div className="p-5 h-96 lg:h-[500px] overflow-y-auto">
-                {result.text ? (
-                  <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
-                    {result.text}
-                  </pre>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-center">
-                    <p className="text-gray-500">No preview text available.</p>
-                    <p className="text-gray-600 text-sm mt-2">
-                      The document has been compiled successfully to Word format.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
+          (() => {
+            const displayedText = activeView === 'ai' && aiText ? aiText : result.text
+            const activeWords = displayedText ? displayedText.split(/\s+/).filter(Boolean).length : 0
+            const activeChars = displayedText ? displayedText.length : 0
 
-            {/* Actions panel */}
-            <div className="flex flex-col gap-4">
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-                <h3 className="text-white font-semibold mb-4">Actions</h3>
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={() => downloadBlob(result.blob, result.fileName)}
-                    className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:opacity-90 transition shadow-lg shadow-purple-500/20"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    Download Word Document
-                  </button>
-
-                  <button
-                    onClick={handleCopy}
-                    className={`flex items-center justify-center gap-2 w-full py-3 px-4 font-semibold rounded-xl border transition ${
-                      copied
-                        ? 'bg-green-500/20 border-green-500/40 text-green-300'
-                        : 'bg-white/5 border-white/20 text-white hover:bg-white/10'
-                    }`}
-                  >
-                    {copied ? (
-                      <>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                        Copy Text
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={handleReset}
-                    className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/20 text-white font-semibold rounded-xl hover:bg-white/10 transition"
-                  >
-                    Convert Another File
-                  </button>
-
-                  <Link
-                    href="/"
-                    className="flex items-center justify-center w-full py-3 text-gray-400 hover:text-white text-sm transition"
-                  >
-                    ← Back Home
-                  </Link>
-                </div>
-              </div>
-
-              {/* File stats */}
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-                <h3 className="text-white font-semibold mb-3">File Info</h3>
-                <dl className="space-y-2 text-sm">
-                  {[
-                    { label: 'Name', value: file?.name ?? '-' },
-                    { label: 'Size', value: file ? `${(file.size / 1024).toFixed(1)} KB` : '-' },
-                    { label: 'Words', value: result.wordCount ? result.wordCount.toLocaleString() : '0' },
-                    { label: 'Characters', value: result.charCount ? result.charCount.toLocaleString() : '0' },
-                  ].map((row) => (
-                    <div key={row.label} className="flex justify-between gap-2">
-                      <dt className="text-gray-400">{row.label}</dt>
-                      <dd className="text-white font-medium truncate max-w-[140px]" title={row.value}>
-                        {row.value}
-                      </dd>
+            return (
+              <div className="grid lg:grid-cols-3 gap-6 animate-fade-in-up">
+                {/* Text preview */}
+                <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 py-4 border-b border-white/10 bg-white/[0.02]">
+                    <div>
+                      <h2 className="text-white font-semibold">
+                        {activeView === 'ai' ? `AI Processed Word Content (${aiAction})` : 'Extracted Word Content'}
+                      </h2>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {activeWords.toLocaleString()} words ·{' '}
+                        {activeChars.toLocaleString()} characters
+                      </p>
                     </div>
-                  ))}
-                </dl>
-              </div>
-            </div>
-          </div>
 
+                    {/* AI View Toggles */}
+                    {aiText && (
+                      <div className="flex bg-black/40 border border-white/10 p-1 rounded-xl">
+                        <button
+                          onClick={() => setActiveView('original')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                            activeView === 'original'
+                              ? 'bg-white/10 text-white'
+                              : 'text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          Original
+                        </button>
+                        <button
+                          onClick={() => setActiveView('ai')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                            activeView === 'ai'
+                              ? 'bg-purple-500/25 text-purple-300 border border-purple-500/30'
+                              : 'text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          AI Version
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-5 h-96 lg:h-[500px] overflow-y-auto relative bg-slate-950/20">
+                    {/* Glowing AI Spinner */}
+                    {isAiLoading && (
+                      <div className="absolute inset-0 bg-black/80 backdrop-blur-[2px] flex flex-col items-center justify-center p-6 text-center animate-fade-in z-10">
+                        <Spinner size="md" color="purple" />
+                        <p className="text-purple-400 font-bold text-sm mt-4 tracking-wide uppercase">AI Assistant active</p>
+                        <p className="text-gray-400 text-xs mt-1">Analyzing and refining your Word document text with Mistral AI…</p>
+                      </div>
+                    )}
+
+                    {displayedText ? (
+                      <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+                        {displayedText}
+                      </pre>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-center">
+                        <p className="text-gray-500">No text available.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Actions column */}
+                <div className="flex flex-col gap-5">
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-5 shadow-lg">
+                    <h3 className="text-white font-semibold mb-4">Actions</h3>
+                    <div className="flex flex-col gap-3">
+                      <button
+                        onClick={() => downloadBlob(result.blob, result.fileName)}
+                        className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:opacity-90 transition shadow-lg shadow-purple-500/20"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Download Word Document
+                      </button>
+
+                      <button
+                        onClick={handleCopy}
+                        className={`flex items-center justify-center gap-2 w-full py-3 px-4 font-semibold rounded-xl border transition ${
+                          copied
+                            ? 'bg-green-500/20 border-green-500/40 text-green-300'
+                            : 'bg-white/5 border-white/20 text-white hover:bg-white/10'
+                        }`}
+                      >
+                        {copied ? (
+                          <>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            Copy Text
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={handleReset}
+                        className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-white/5 border border-white/20 text-white font-semibold rounded-xl hover:bg-white/10 transition"
+                      >
+                        Convert Another File
+                      </button>
+
+                      <Link
+                        href="/"
+                        className="flex items-center justify-center w-full py-3 text-gray-400 hover:text-white text-sm transition"
+                      >
+                        ← Back Home
+                      </Link>
+                    </div>
+                  </div>
+
+                  {/* SaaS AI Assistant Panel */}
+                  <div className="bg-gradient-to-br from-[#1b102b] to-[#120a1e] border border-purple-500/30 rounded-2xl p-5 shadow-xl shadow-purple-500/5 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+                    
+                    <h3 className="text-white font-bold text-base mb-1 flex items-center gap-2">
+                      <span className="text-purple-400 animate-pulse">✨</span> AI Assistant
+                    </h3>
+                    <p className="text-gray-400 text-xs mb-4">SaaS document processing powered by Mistral AI.</p>
+
+                    {aiError && (
+                      <div className="mb-3 px-3 py-2 bg-red-900/30 border border-red-500/30 rounded-xl text-xs text-red-300">
+                        {aiError}
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-2">
+                      <button
+                        disabled={isAiLoading || !result?.text}
+                        onClick={() => handleAiProcess('clean')}
+                        className={`flex items-center gap-2.5 py-2.5 px-3 rounded-xl border text-xs font-semibold text-left transition ${
+                          aiAction === 'clean' && isAiLoading
+                            ? 'bg-purple-500/25 border-purple-500/40 text-purple-300'
+                            : 'bg-white/5 border-white/10 text-gray-200 hover:bg-white/10 disabled:opacity-50'
+                        }`}
+                      >
+                        <span>🧹</span>
+                        <div className="flex-1">
+                          <div>Clean OCR Typos</div>
+                          <div className="text-[9px] text-gray-500 font-normal">Fix spelling errors and formatting</div>
+                        </div>
+                        {aiAction === 'clean' && isAiLoading && <Spinner size="sm" color="purple" />}
+                      </button>
+
+                      <button
+                        disabled={isAiLoading || !result?.text}
+                        onClick={() => handleAiProcess('summarize')}
+                        className={`flex items-center gap-2.5 py-2.5 px-3 rounded-xl border text-xs font-semibold text-left transition ${
+                          aiAction === 'summarize' && isAiLoading
+                            ? 'bg-purple-500/25 border-purple-500/40 text-purple-300'
+                            : 'bg-white/5 border-white/10 text-gray-200 hover:bg-white/10 disabled:opacity-50'
+                        }`}
+                      >
+                        <span>📊</span>
+                        <div className="flex-1">
+                          <div>Summarize Document</div>
+                          <div className="text-[9px] text-gray-500 font-normal">Create clear executive bullets</div>
+                        </div>
+                        {aiAction === 'summarize' && isAiLoading && <Spinner size="sm" color="purple" />}
+                      </button>
+
+                      <button
+                        disabled={isAiLoading || !result?.text}
+                        onClick={() => handleAiProcess('format')}
+                        className={`flex items-center gap-2.5 py-2.5 px-3 rounded-xl border text-xs font-semibold text-left transition ${
+                          aiAction === 'format' && isAiLoading
+                            ? 'bg-purple-500/25 border-purple-500/40 text-purple-300'
+                            : 'bg-white/5 border-white/10 text-gray-200 hover:bg-white/10 disabled:opacity-50'
+                        }`}
+                      >
+                        <span>🏢</span>
+                        <div className="flex-1">
+                          <div>Professional Formatting</div>
+                          <div className="text-[9px] text-gray-500 font-normal">Structure clean layout and headings</div>
+                        </div>
+                        {aiAction === 'format' && isAiLoading && <Spinner size="sm" color="purple" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* File stats */}
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-5 shadow-lg">
+                    <h3 className="text-white font-semibold mb-3">File Info</h3>
+                    <dl className="space-y-2 text-sm">
+                      {[
+                        { label: 'Name', value: file?.name ?? '-' },
+                        { label: 'Size', value: file ? `${(file.size / 1024).toFixed(1)} KB` : '-' },
+                        { label: 'Original Words', value: result.wordCount ? result.wordCount.toLocaleString() : '0' },
+                        { label: 'Original Characters', value: result.charCount ? result.charCount.toLocaleString() : '0' },
+                      ].map((row) => (
+                        <div key={row.label} className="flex justify-between gap-2">
+                          <dt className="text-gray-400">{row.label}</dt>
+                          <dd className="text-white font-medium truncate max-w-[140px]" title={row.value}>
+                            {row.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+
+                </div>
+              </div>
+            )
+          })()
         ) : isProcessing && stage !== 'ocr_processing' ? (
           /* Processing */
           <div className="bg-white/5 border border-white/10 rounded-2xl p-10 text-center">

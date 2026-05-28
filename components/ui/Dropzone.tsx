@@ -7,17 +7,35 @@ interface DropzoneProps {
   disabled?: boolean
   maxSizeMB?: number
   onError?: (msg: string) => void
+  accept?: string
+  acceptLabel?: string
+  dragLabel?: string
 }
 
-export function Dropzone({ onFileSelect, disabled = false, maxSizeMB = 50, onError }: DropzoneProps) {
+export function Dropzone({
+  onFileSelect,
+  disabled = false,
+  maxSizeMB = 50,
+  onError,
+  accept = '.pdf,application/pdf',
+  acceptLabel = 'PDF files only',
+  dragLabel = 'PDF',
+}: DropzoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validateAndSelect = useCallback(
     (file: File) => {
-      if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
-        onError?.('Please select a valid PDF file.')
-        return
+      if (accept.includes('image')) {
+        if (!file.type.startsWith('image/')) {
+          onError?.('Please select a valid image file.')
+          return
+        }
+      } else {
+        if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
+          onError?.('Please select a valid PDF file.')
+          return
+        }
       }
       if (file.size > maxSizeMB * 1024 * 1024) {
         onError?.(`File is too large. Maximum size is ${maxSizeMB}MB.`)
@@ -25,7 +43,7 @@ export function Dropzone({ onFileSelect, disabled = false, maxSizeMB = 50, onErr
       }
       onFileSelect(file)
     },
-    [onFileSelect, maxSizeMB, onError]
+    [onFileSelect, maxSizeMB, onError, accept]
   )
 
   const handleDrag = (e: React.DragEvent) => {
@@ -50,11 +68,13 @@ export function Dropzone({ onFileSelect, disabled = false, maxSizeMB = 50, onErr
     e.target.value = ''
   }
 
+  const isPdf = accept.includes('pdf')
+
   return (
     <div
       role="button"
       tabIndex={disabled ? -1 : 0}
-      aria-label="Upload PDF file. Click or drag and drop."
+      aria-label={`Upload file. Click or drag and drop.`}
       aria-disabled={disabled}
       className={`relative border-2 border-dashed rounded-2xl p-10 text-center transition-all duration-300 ${
         isDragging
@@ -73,7 +93,7 @@ export function Dropzone({ onFileSelect, disabled = false, maxSizeMB = 50, onErr
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,application/pdf"
+        accept={accept}
         onChange={handleChange}
         className="hidden"
         disabled={disabled}
@@ -86,19 +106,23 @@ export function Dropzone({ onFileSelect, disabled = false, maxSizeMB = 50, onErr
             isDragging ? 'bg-blue-500/20 scale-110' : 'bg-white/10'
           }`}
         >
-          <svg className="w-10 h-10 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-            />
-          </svg>
+          {isPdf ? (
+            <svg className="w-10 h-10 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+          ) : (
+            <span className="text-4xl">🖼️</span>
+          )}
         </div>
 
         <div>
           <p className="text-xl font-semibold text-white mb-1">
-            {isDragging ? 'Drop your PDF here!' : 'Drag & Drop your PDF'}
+            {isDragging ? `Drop your ${dragLabel} here!` : `Drag & Drop your ${dragLabel}`}
           </p>
           <p className="text-gray-400">
             or{' '}
@@ -106,7 +130,7 @@ export function Dropzone({ onFileSelect, disabled = false, maxSizeMB = 50, onErr
               browse to choose a file
             </span>
           </p>
-          <p className="text-xs text-gray-500 mt-3">PDF files only • Maximum {maxSizeMB}MB</p>
+          <p className="text-xs text-gray-500 mt-3">{acceptLabel} • Maximum {maxSizeMB}MB</p>
         </div>
       </div>
     </div>

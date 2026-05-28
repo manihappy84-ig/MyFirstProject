@@ -24,6 +24,16 @@ const TOOLS = [
     badgeColor: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
   },
   {
+    id: 'image-to-text',
+    icon: '🖼️',
+    title: 'Image to Text',
+    description: 'Scan and extract characters from images (PNG, JPG, WebP) and download in 10+ formats.',
+    href: '/tools/image-to-text',
+    gradient: 'from-orange-500 to-amber-500',
+    badge: 'New',
+    badgeColor: 'bg-orange-500/20 text-orange-300 border border-orange-500/30',
+  },
+  {
     id: 'unlock-pdf',
     icon: '🔓',
     title: 'Unlock PDF',
@@ -74,14 +84,14 @@ export default function Home() {
         </div>
 
         <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 leading-tight">
-          PDF Tools for{' '}
+          PDF & Image Tools for{' '}
           <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
             2026
           </span>
         </h1>
 
         <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-12">
-          Convert PDFs to Text or Word, unlock password-protected documents — fast, secure, and completely free.
+          Convert PDFs and images, unlock passwords, clean OCR errors, and export documents — fast, secure, and completely free.
         </p>
 
         <a
@@ -102,7 +112,7 @@ export default function Home() {
           <p className="text-gray-400">Click any card below to get started immediately</p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {TOOLS.map((tool) => (
             <button
               key={tool.id}

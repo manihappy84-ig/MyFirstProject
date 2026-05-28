@@ -25,6 +25,21 @@ const nextConfig = {
       config.resolve.fallback.fs = false
       config.resolve.fallback.path = false
       config.resolve.fallback.os = false
+      config.resolve.fallback.http = false
+      config.resolve.fallback.https = false
+      config.resolve.fallback['node:fs'] = false
+      config.resolve.fallback['node:https'] = false
+      config.resolve.fallback['node:http'] = false
+      config.resolve.fallback['node:path'] = false
+      config.resolve.fallback['node:os'] = false
+
+      // Use aliases to strip custom node: schemes from client bundles
+      if (!config.resolve.alias) config.resolve.alias = {}
+      config.resolve.alias['node:fs'] = false
+      config.resolve.alias['node:https'] = false
+      config.resolve.alias['node:http'] = false
+      config.resolve.alias['node:path'] = false
+      config.resolve.alias['node:os'] = false
     }
 
     return config
