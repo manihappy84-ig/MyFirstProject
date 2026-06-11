@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 const TOOLS = [
@@ -47,33 +48,106 @@ const TOOLS = [
 
 export default function Home() {
   const router = useRouter()
+  const [activeModal, setActiveModal] = useState<string | null>(null)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [leadSubmitted, setLeadSubmitted] = useState(false)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-[#1e3a5f] to-slate-900">
       {/* ── Header ─────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-black/50 backdrop-blur-xl border-b border-white/10">
+      <header className="sticky top-0 z-50 bg-slate-950/80 backdrop-blur-xl border-b border-white/10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-cyan-500 rounded-xl flex items-center justify-center font-bold text-white shadow-lg">
-              AI
+          
+          {/* Logo / Brand */}
+          <a href="#" className="flex items-center gap-2.5 hover:opacity-90 transition">
+            <span className="text-2xl font-black text-rose-500 tracking-tight">OCR</span>
+            <div className="flex flex-col">
+              <span className="text-lg font-bold text-white tracking-tight leading-none">InfyGalaxy</span>
+              <span className="text-[8px] font-bold text-rose-400 tracking-widest mt-1 leading-none">SHAPING AI TOOLS</span>
             </div>
-            <div>
-              <span className="text-xl font-bold text-white">ai2026</span>
-              <span className="text-xs text-gray-500 ml-2">v1.0</span>
-            </div>
-          </div>
-          <nav className="hidden md:flex items-center gap-1" aria-label="Main navigation">
-            {['Converter', 'Features', 'Contact'].map((item) => (
-              <a
-                key={item}
-                href={`#${item.toLowerCase()}`}
-                className="px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition"
+          </a>
+
+          {/* Desktop Navigation Links */}
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-2" aria-label="Main navigation">
+            {[
+              { label: 'About Us', action: () => setActiveModal('about') },
+              { label: 'OCR', action: () => { const el = document.getElementById('tools'); el?.scrollIntoView({ behavior: 'smooth' }) } },
+              { label: 'Services', action: () => { const el = document.getElementById('tools'); el?.scrollIntoView({ behavior: 'smooth' }) } },
+              { label: 'AI Solutions', action: () => setActiveModal('ai-solutions') },
+              { label: 'Tools', action: () => { const el = document.getElementById('tools'); el?.scrollIntoView({ behavior: 'smooth' }) } },
+              { label: 'Hire AI Experts', action: () => setActiveModal('hire') },
+              { label: 'Blog', action: () => setActiveModal('blog') },
+              { label: 'Contact Us', action: () => { const el = document.getElementById('contact'); el?.scrollIntoView({ behavior: 'smooth' }) } }
+            ].map((menu) => (
+              <button
+                key={menu.label}
+                onClick={menu.action}
+                className="px-3 py-2 text-sm text-gray-300 hover:text-white rounded-lg hover:bg-white/5 transition font-medium"
               >
-                {item}
-              </a>
+                {menu.label}
+              </button>
             ))}
           </nav>
+
+          {/* Right Area: Login Button & Mobile Toggle */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActiveModal('login')}
+              className="hidden sm:flex items-center gap-2 border border-rose-500/30 hover:border-rose-500 text-white font-medium text-sm px-4 py-1.5 rounded-full hover:bg-rose-500/10 transition"
+            >
+              <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping" />
+              <span>Login</span>
+            </button>
+
+            {/* Mobile Menu Hamburger */}
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="lg:hidden text-gray-400 hover:text-white transition p-2"
+              aria-label="Toggle menu"
+            >
+              {isMobileMenuOpen ? (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile Navigation Drawer */}
+        {isMobileMenuOpen && (
+          <div className="lg:hidden border-t border-white/10 bg-slate-950/95 p-4 flex flex-col gap-2">
+            {[
+              { label: 'About Us', action: () => { setActiveModal('about'); setIsMobileMenuOpen(false); } },
+              { label: 'OCR', action: () => { const el = document.getElementById('tools'); el?.scrollIntoView({ behavior: 'smooth' }); setIsMobileMenuOpen(false); } },
+              { label: 'Services', action: () => { const el = document.getElementById('tools'); el?.scrollIntoView({ behavior: 'smooth' }); setIsMobileMenuOpen(false); } },
+              { label: 'AI Solutions', action: () => { setActiveModal('ai-solutions'); setIsMobileMenuOpen(false); } },
+              { label: 'Tools', action: () => { const el = document.getElementById('tools'); el?.scrollIntoView({ behavior: 'smooth' }); setIsMobileMenuOpen(false); } },
+              { label: 'Hire AI Experts', action: () => { setActiveModal('hire'); setIsMobileMenuOpen(false); } },
+              { label: 'Blog', action: () => { setActiveModal('blog'); setIsMobileMenuOpen(false); } },
+              { label: 'Contact Us', action: () => { const el = document.getElementById('contact'); el?.scrollIntoView({ behavior: 'smooth' }); setIsMobileMenuOpen(false); } }
+            ].map((menu) => (
+              <button
+                key={menu.label}
+                onClick={menu.action}
+                className="w-full text-left py-2 px-3 text-sm text-gray-300 hover:text-white rounded-lg hover:bg-white/5 transition"
+              >
+                {menu.label}
+              </button>
+            ))}
+            <button
+              onClick={() => { setActiveModal('login'); setIsMobileMenuOpen(false); }}
+              className="mt-2 w-full flex items-center justify-center gap-2 border border-rose-500/30 text-white font-medium text-sm py-2 rounded-xl hover:bg-rose-500/10 transition"
+            >
+              <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping" />
+              <span>Login</span>
+            </button>
+          </div>
+        )}
       </header>
 
       {/* ── Hero ───────────────────────────────────────────── */}
@@ -202,6 +276,152 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* ── Modals ─────────────────────────────────────────── */}
+      {activeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-slate-900/95 border border-white/10 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden glass">
+            {/* Close Button */}
+            <button
+              onClick={() => { setActiveModal(null); setLeadSubmitted(false); }}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition text-lg font-bold"
+              aria-label="Close modal"
+            >
+              ✕
+            </button>
+
+            {/* Modal - LOGIN */}
+            {activeModal === 'login' && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 text-xl mb-3">🔑</div>
+                  <h3 className="text-xl font-bold text-white">Login to InfyGalaxy</h3>
+                  <p className="text-gray-400 text-xs mt-1">Manage your enterprise OCR models & projects</p>
+                </div>
+                <form onSubmit={(e) => { e.preventDefault(); setActiveModal(null); }} className="space-y-3 pt-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Email Address</label>
+                    <input type="email" required placeholder="name@company.com" className="w-full bg-white/5 border border-white/10 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Password</label>
+                    <input type="password" required placeholder="••••••••" className="w-full bg-white/5 border border-white/10 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500" />
+                  </div>
+                  <button type="submit" className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-sm transition mt-4">
+                    Continue to Dashboard
+                  </button>
+                </form>
+                <div className="text-center pt-2">
+                  <a href="#" className="text-xs text-gray-500 hover:text-gray-300">Forgot your password?</a>
+                </div>
+              </div>
+            )}
+
+            {/* Modal - ABOUT */}
+            {activeModal === 'about' && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 text-xl mb-3">🏢</div>
+                  <h3 className="text-xl font-bold text-white">About InfyGalaxy</h3>
+                </div>
+                <div className="space-y-3 text-sm text-gray-300 leading-relaxed pt-2">
+                  <p>
+                    InfyGalaxy is at the forefront of digital transformation, engineering high-speed OCR, document parsing, and semantic correction pipelines.
+                  </p>
+                  <p>
+                    By combining browser-local WebAssembly execution (Layer 1) with secure generative models (Layer 2), we enable organizations to digitize records with 100% data privacy and zero server overhead.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Modal - AI SOLUTIONS */}
+            {activeModal === 'ai-solutions' && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 text-xl mb-3">🤖</div>
+                  <h3 className="text-xl font-bold text-white">AI Solutions Suite</h3>
+                </div>
+                <div className="space-y-3 text-sm text-gray-300 pt-2">
+                  {[
+                    { title: '📝 Smart Typos Correction', desc: 'Contextual correction mapping corrupt OCR letters back to proper location terms.' },
+                    { title: '📊 Tabular Structure Mining', desc: 'Parses complex visual spreadsheets, receipts, and invoices into cleanly organized digital grids.' },
+                    { title: '🔒 Automated Redaction', desc: 'Intelligently identifies and censors PII, signatures, and confidential numbers entirely client-side.' }
+                  ].map((sol, idx) => (
+                    <div key={idx} className="bg-white/5 border border-white/5 rounded-xl p-3">
+                      <h4 className="font-semibold text-rose-300 text-xs">{sol.title}</h4>
+                      <p className="text-gray-400 text-[11px] mt-0.5">{sol.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Modal - HIRE EXPERTS */}
+            {activeModal === 'hire' && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 text-xl mb-3">💼</div>
+                  <h3 className="text-xl font-bold text-white">Hire AI & OCR Experts</h3>
+                  <p className="text-gray-400 text-xs mt-1">Get custom document workflows built by our core engineering team</p>
+                </div>
+                {leadSubmitted ? (
+                  <div className="text-center py-6 space-y-2 animate-fade-in">
+                    <span className="text-3xl">🎉</span>
+                    <h4 className="font-bold text-white text-base">Inquiry Submitted!</h4>
+                    <p className="text-xs text-gray-400 max-w-xs mx-auto">Thank you for reaching out. An InfyGalaxy integration specialist will review your request and contact you within 24 hours.</p>
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={(e) => { e.preventDefault(); setLeadSubmitted(true); }}
+                    className="space-y-3 pt-2"
+                  >
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Your Name</label>
+                      <input type="text" required placeholder="John Doe" className="w-full bg-white/5 border border-white/10 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Work Email</label>
+                      <input type="email" required placeholder="john@company.com" className="w-full bg-white/5 border border-white/10 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Project Description</label>
+                      <textarea required rows={3} placeholder="Tell us about the document pipelines you want to automate..." className="w-full bg-white/5 border border-white/10 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500 resize-none" />
+                    </div>
+                    <button type="submit" className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-sm transition mt-3">
+                      Submit Consultation Request
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+
+            {/* Modal - BLOG */}
+            {activeModal === 'blog' && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 text-xl mb-3">📰</div>
+                  <h3 className="text-xl font-bold text-white">InfyGalaxy Blog</h3>
+                </div>
+                <div className="space-y-3 pt-2 max-h-80 overflow-y-auto pr-1">
+                  {[
+                    { date: 'June 2026', title: 'Why Local-First OCR is the Future of Privacy', desc: 'Analyzing the performance benefits of processing character recognition directly on client Webworkers.' },
+                    { date: 'May 2026', title: 'Intelligent Table Reconstruction with Small LLMs', desc: 'How semantic models reconstruct mangled OCR names by identifying context clues in Indian geographic directories.' },
+                    { date: 'April 2026', title: 'Auto-fitting Column Widths in Client-Side Spreadsheet Generation', desc: 'A deep dive into SheetJS cell length measurements for flawless Excel exports.' }
+                  ].map((post, idx) => (
+                    <div key={idx} className="border-b border-white/5 pb-3 last:border-0">
+                      <span className="text-[9px] text-rose-400 font-bold uppercase">{post.date}</span>
+                      <h4 className="font-semibold text-white text-xs mt-0.5 hover:text-rose-300 cursor-pointer transition">{post.title}</h4>
+                      <p className="text-gray-400 text-[11px] mt-1 line-clamp-2">{post.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
     </div>
   )
 }
