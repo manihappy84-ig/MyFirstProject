@@ -44,6 +44,16 @@ const TOOLS = [
     badge: 'Free',
     badgeColor: 'bg-green-500/20 text-green-300 border border-green-500/30',
   },
+  {
+    id: 'remove-watermark',
+    icon: '✨',
+    title: 'Remove Watermark',
+    description: 'Remove text or background image watermarks from PDF and PPTX files instantly.',
+    href: '/tools/remove-watermark',
+    gradient: 'from-rose-500 to-pink-500',
+    badge: 'New',
+    badgeColor: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+  },
 ]
 
 export default function Home() {
