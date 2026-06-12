@@ -164,26 +164,26 @@ export default function Home() {
       <section className="max-w-7xl mx-auto px-4 py-20 text-center">
         <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-full px-4 py-1.5 mb-8">
           <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-          <span className="text-sm text-blue-300 font-medium">Free • No signup • Instant results</span>
+          <span className="text-xs text-blue-300 font-medium">Free • No signup • Instant results</span>
         </div>
 
-        <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 leading-tight">
+        <h1 className="text-4xl md:text-5xl font-bold text-white mb-6 leading-tight">
           PDF & Image Tools for{' '}
           <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
             2026
           </span>
         </h1>
 
-        <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-12">
+        <p className="text-base text-gray-400 max-w-xl mx-auto mb-12">
           Convert PDFs and images, unlock passwords, clean OCR errors, and export documents — fast, secure, and completely free.
         </p>
 
         <a
           href="#tools"
-          className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-semibold rounded-xl hover:opacity-90 transition shadow-lg shadow-blue-500/25 text-lg"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-semibold rounded-xl hover:opacity-90 transition shadow-lg shadow-blue-500/25 text-sm"
         >
           Get Started Free
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </a>
@@ -192,8 +192,8 @@ export default function Home() {
       {/* ── Tool Cards (THE FIX: real <button> with router.push) ── */}
       <section id="tools" className="max-w-7xl mx-auto px-4 pb-24" aria-label="PDF Tools">
         <div className="text-center mb-10">
-          <h2 className="text-3xl font-bold text-white mb-2">Choose Your Tool</h2>
-          <p className="text-gray-400">Click any card below to get started immediately</p>
+          <h2 className="text-2xl font-bold text-white mb-2">Choose Your Tool</h2>
+          <p className="text-sm text-gray-400">Click any card below to get started immediately</p>
         </div>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -203,31 +203,31 @@ export default function Home() {
               id={`tool-${tool.id}`}
               type="button"
               onClick={() => router.push(tool.href)}
-              className="group tool-card glass glass-hover rounded-2xl p-8 text-left w-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 focus-visible:outline-offset-2"
+              className="group tool-card glass glass-hover rounded-2xl p-6 text-left w-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 focus-visible:outline-offset-2"
               aria-label={`Open ${tool.title} tool`}
             >
               {/* Icon + Badge row */}
               <div className="flex items-start justify-between mb-6">
                 <div
-                  className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center text-3xl shadow-lg group-hover:scale-110 transition-transform duration-300`}
+                  className={`w-12 h-12 rounded-xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center text-2xl shadow-lg group-hover:scale-110 transition-transform duration-300`}
                 >
                   {tool.icon}
                 </div>
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${tool.badgeColor}`}>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${tool.badgeColor}`}>
                   {tool.badge}
                 </span>
               </div>
 
-              <h3 className="text-xl font-bold text-white mb-2 group-hover:text-blue-300 transition-colors">
+              <h3 className="text-lg font-bold text-white mb-2 group-hover:text-blue-300 transition-colors">
                 {tool.title}
               </h3>
-              <p className="text-gray-400 text-sm leading-relaxed mb-6">{tool.description}</p>
+              <p className="text-gray-400 text-xs leading-relaxed mb-6">{tool.description}</p>
 
               {/* CTA row */}
-              <div className={`flex items-center gap-2 text-sm font-semibold bg-gradient-to-r ${tool.gradient} bg-clip-text text-transparent`}>
+              <div className={`flex items-center gap-2 text-xs font-semibold bg-gradient-to-r ${tool.gradient} bg-clip-text text-transparent`}>
                 <span>Open Tool</span>
                 <svg
-                  className="w-4 h-4 group-hover:translate-x-1 transition-transform text-blue-400"
+                  className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform text-blue-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
