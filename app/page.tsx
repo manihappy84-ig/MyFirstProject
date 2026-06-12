@@ -69,11 +69,11 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           
           {/* Logo / Brand */}
-          <a href="#" className="flex items-center gap-2.5 hover:opacity-90 transition">
-            <span className="text-2xl font-black text-rose-500 tracking-tight">OCR</span>
+          <a href="#" className="flex items-center gap-3 hover:opacity-90 transition">
+            <span className="text-3xl font-black text-rose-500 tracking-tight">OCR</span>
             <div className="flex flex-col">
-              <span className="text-lg font-bold text-white tracking-tight leading-none">InfyGalaxy</span>
-              <span className="text-[8px] font-bold text-rose-400 tracking-widest mt-1 leading-none">SHAPING AI TOOLS</span>
+              <span className="text-2xl font-bold text-white tracking-tight leading-none">InfyGalaxy</span>
+              <span className="text-[10px] font-bold text-rose-400 tracking-widest mt-1.5 leading-none">SHAPING AI TOOLS</span>
             </div>
           </a>
 
