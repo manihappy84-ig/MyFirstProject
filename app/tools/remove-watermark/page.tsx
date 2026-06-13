@@ -26,6 +26,10 @@ export default function RemoveWatermarkPage() {
   const [watermarkText, setWatermarkText] = useState('CONFIDENTIAL')
   const [removeImages, setRemoveImages] = useState(true)
   const [smartClean, setSmartClean] = useState(true)
+  const [mergePdfs, setMergePdfs] = useState(false)
+
+  const allPdfs = files.length > 0 && files.every((f) => f.name.toLowerCase().endsWith('.pdf'))
+  const isMergingActive = allPdfs && mergePdfs
 
   const handleFilesSelect = useCallback((newFiles: File[]) => {
     setFiles((prev) => [...prev, ...newFiles])
@@ -53,6 +57,7 @@ export default function RemoveWatermarkPage() {
     setFileError(null)
     setCleanedFiles([])
     setProgress({ percent: 0, label: '' })
+    setMergePdfs(false)
   }
 
   // Inject JSZip from CDN dynamically
@@ -363,6 +368,22 @@ export default function RemoveWatermarkPage() {
     return new Blob([outputBytes as any], { type: 'application/pdf' })
   }
 
+  // Merge PDF Blobs
+  const mergePdfBlobs = async (filesList: { name: string; blob: Blob }[]): Promise<Blob> => {
+    const { PDFDocument } = await import('pdf-lib')
+    const mergedPdf = await PDFDocument.create()
+    
+    for (const fileItem of filesList) {
+      const arrayBuffer = await fileItem.blob.arrayBuffer()
+      const srcDoc = await PDFDocument.load(arrayBuffer)
+      const copiedPages = await mergedPdf.copyPages(srcDoc, srcDoc.getPageIndices())
+      copiedPages.forEach((page) => mergedPdf.addPage(page))
+    }
+    
+    const bytes = await mergedPdf.save()
+    return new Blob([bytes as any], { type: 'application/pdf' })
+  }
+
   const handleProcess = async () => {
     if (files.length === 0) return
     setError(null)
@@ -416,6 +437,16 @@ export default function RemoveWatermarkPage() {
       const prefix = fileResult.name.replace(/\.[^/.]+$/, '')
       const ext = fileResult.name.endsWith('.pptx') ? 'pptx' : 'pdf'
       downloadBlob(fileResult.blob, `${prefix}_cleaned.${ext}`)
+    } else if (isMergingActive) {
+      try {
+        setProgress({ percent: 95, label: 'Merging PDF documents…' })
+        const mergedBlob = await mergePdfBlobs(cleanedFiles)
+        downloadBlob(mergedBlob, 'watermarks_removed_merged.pdf')
+        setProgress({ percent: 100, label: 'Merged PDF downloaded successfully!' })
+      } catch (err: any) {
+        console.error('PDF merge error:', err)
+        setError('Failed to merge PDF documents.')
+      }
     } else {
       try {
         setProgress({ percent: 95, label: 'Creating ZIP archive…' })
@@ -483,7 +514,11 @@ export default function RemoveWatermarkPage() {
                 onClick={handleDownload}
                 className="w-full py-4 px-6 bg-gradient-to-r from-rose-600 to-pink-600 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2"
               >
-                <span>💾</span> {cleanedFiles.length > 1 ? 'Download Cleaned Files (ZIP)' : 'Download Cleaned File'}
+                <span>💾</span> {
+                  cleanedFiles.length > 1 
+                    ? (isMergingActive ? 'Download Merged PDF' : 'Download Cleaned Files (ZIP)') 
+                    : 'Download Cleaned File'
+                }
               </button>
 
               <button
@@ -570,6 +605,25 @@ export default function RemoveWatermarkPage() {
                       </p>
                     </div>
                   </label>
+
+                  {allPdfs && (
+                    <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
+                      <input
+                        type="checkbox"
+                        checked={mergePdfs}
+                        onChange={(e) => setMergePdfs(e.target.checked)}
+                        className="mt-0.5 rounded border-white/10 text-rose-600 focus:ring-0 focus:ring-offset-0 bg-transparent"
+                      />
+                      <div>
+                        <span className="text-xs font-semibold text-white group-hover:text-rose-300 transition">
+                          Merge PDFs into One File
+                        </span>
+                        <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+                          Combine all clean PDF documents into a single merged PDF file.
+                        </p>
+                      </div>
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
