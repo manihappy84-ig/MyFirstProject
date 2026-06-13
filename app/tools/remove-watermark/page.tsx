@@ -60,6 +60,21 @@ export default function RemoveWatermarkPage() {
     })
   }
 
+  // Inject pako from CDN dynamically
+  const loadPako = async (): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).pako) {
+        resolve((window as any).pako)
+        return
+      }
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js'
+      script.onload = () => resolve((window as any).pako)
+      script.onerror = () => reject(new Error('Failed to load decompression component.'))
+      document.body.appendChild(script)
+    })
+  }
+
   // PowerPoint PPTX Watermark Removal
   const cleanPptx = async (fileBytes: ArrayBuffer, searchStr: string): Promise<Blob> => {
     const JSZip = await loadJSZip()
@@ -150,95 +165,184 @@ export default function RemoveWatermarkPage() {
 
   // PDF Watermark Removal
   const cleanPdf = async (fileBytes: ArrayBuffer, searchStr: string): Promise<Blob> => {
-    const { PDFDocument, PDFDict, PDFName } = await import('pdf-lib')
+    const { PDFDocument, PDFDict, PDFName, PDFArray, PDFStream, PDFRawStream } = await import('pdf-lib')
+    const pako = await loadPako()
     const pdfDoc = await PDFDocument.load(fileBytes)
     const pages = pdfDoc.getPages()
     const lowercaseSearch = searchStr.toLowerCase()
     const totalPages = pages.length
+
+    // Helper to decompress a stream using pako
+    const decompressStream = (stream: any) => {
+      const bytes = stream.getContents()
+      const filter = stream.dict.get(PDFName.of('Filter'))
+      if (filter && filter.toString() === '/FlateDecode') {
+        try {
+          return { decompressed: pako.inflate(bytes), isCompressed: true }
+        } catch (err) {
+          console.error("Inflation failed:", err)
+          return { decompressed: bytes, isCompressed: false }
+        }
+      }
+      return { decompressed: bytes, isCompressed: false }
+    }
+
+    // Helper to compress bytes back using pako
+    const compressBytes = (bytes: Uint8Array) => {
+      return pako.deflate(bytes)
+    }
+
+    const cleanStreamText = (stream: any) => {
+      const { decompressed, isCompressed } = decompressStream(stream)
+      const rawText = new TextDecoder('utf-8').decode(decompressed)
+      
+      if (rawText.toLowerCase().includes(lowercaseSearch)) {
+        let cleanedText = rawText
+        
+        // Replace occurrences inside text display operators: (TEXT) Tj or (TEXT) TJ
+        const escaped = searchStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const regex = new RegExp(`\\([^)]*${escaped}[^)]*\\)`, 'gi')
+        cleanedText = cleanedText.replace(regex, '()')
+        
+        if (smartClean) {
+          cleanedText = cleanedText
+            .replace(/\/GS\d+\s+gs/g, '') // strip transparency state operators
+            .replace(/\/Gs\d+\s+gs/g, '')
+        }
+        
+        let compressed = new TextEncoder().encode(cleanedText)
+        if (isCompressed) {
+          compressed = compressBytes(compressed)
+        }
+        
+        stream.contents = compressed
+        stream.updateDict()
+        return true
+      }
+      return false
+    }
+
+    // Recursive XObject cleaner
+    const processedRefs = new Set<string>()
+    const cleanXObjects = (xObjectsDict: any, depth = 0) => {
+      if (!(xObjectsDict instanceof PDFDict)) return
+      
+      const keys = xObjectsDict.keys()
+      for (const key of keys) {
+        const xObjectRef = xObjectsDict.get(key)
+        if (!xObjectRef) continue
+        
+        const refStr = xObjectRef.toString()
+        if (processedRefs.has(refStr)) continue
+        processedRefs.add(refStr)
+        
+        const xObject = pdfDoc.context.lookup(xObjectRef) as any
+        if (!xObject) continue
+        
+        let dictObj = null
+        if (xObject instanceof PDFDict) {
+          dictObj = xObject
+        } else if (xObject.dict instanceof PDFDict) {
+          dictObj = xObject.dict
+        }
+        
+        if (dictObj) {
+          const subtype = dictObj.get(PDFName.of('Subtype'))
+          const subtypeStr = subtype ? subtype.toString() : ''
+          
+          if (subtypeStr === '/Form') {
+            // Heuristic for vector watermark:
+            // Has a transparency group (/Group) and size is large (> 1000 bytes)
+            const hasGroup = dictObj.get(PDFName.of('Group')) !== undefined
+            const streamSize = typeof xObject.getContents === 'function' ? xObject.getContents().length : 0
+            
+            if (hasGroup && streamSize > 1000) {
+              xObject.contents = new Uint8Array([])
+              xObject.updateDict()
+            } else {
+              // Otherwise check for text watermark in the Form XObject stream
+              if (xObject instanceof PDFStream || xObject instanceof PDFRawStream) {
+                cleanStreamText(xObject)
+              }
+              
+              // Recurse into resources
+              const resourcesRef = dictObj.get(PDFName.of('Resources'))
+              if (resourcesRef) {
+                const resources = pdfDoc.context.lookup(resourcesRef)
+                if (resources instanceof PDFDict) {
+                  const nestedXObjectsRef = resources.get(PDFName.of('XObject'))
+                  if (nestedXObjectsRef) {
+                    const nestedXObjects = pdfDoc.context.lookup(nestedXObjectsRef)
+                    cleanXObjects(nestedXObjects, depth + 1)
+                  }
+                }
+              }
+            }
+          } else if (subtypeStr === '/Image' && removeImages) {
+            // Clean large image watermarks
+            const widthObj = dictObj.get(PDFName.of('Width'))
+            const heightObj = dictObj.get(PDFName.of('Height'))
+            
+            const getNum = (o: any) => {
+              if (!o) return undefined
+              const resolved = pdfDoc.context.lookup(o)
+              if (resolved && typeof (resolved as any).asNumber === 'function') {
+                return (resolved as any).asNumber()
+              }
+              if (resolved && typeof (resolved as any).value === 'number') {
+                return (resolved as any).value
+              }
+              return undefined
+            }
+            
+            const width = getNum(widthObj)
+            const height = getNum(heightObj)
+            
+            if (width && height && width > 400 && height > 400) {
+              xObjectsDict.set(key, pdfDoc.context.obj({}))
+            }
+          }
+        }
+      }
+    }
 
     for (let i = 0; i < totalPages; i++) {
       const page = pages[i]
       const percent = Math.round(((i + 1) / totalPages) * 80)
       setProgress({
         percent,
-        label: `Scanning PDF page content streams ${i + 1} of ${totalPages} (${percent}%)…`
+        label: `Scanning page ${i + 1} of ${totalPages} (${percent}%)…`
       })
 
-      // Modify page content streams
-      const { getContentStreams } = page as any
-      if (typeof getContentStreams === 'function') {
-        const streams = getContentStreams.call(page)
-        for (const stream of streams) {
-          const bytes = stream.getContents()
-          const rawText = new TextDecoder('utf-8').decode(bytes)
-
-          if (rawText.toLowerCase().includes(lowercaseSearch)) {
-            let cleanedText = rawText
-
-            // Replace occurrences inside text display operators
-            // Handles simple text formats (CONFIDENTIAL) Tj or similar
-            const escaped = searchStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-            const regex = new RegExp(`\\([^)]*${escaped}[^)]*\\)`, 'gi')
-            cleanedText = cleanedText.replace(regex, '()')
-
-            if (smartClean) {
-              // Strip transparent background operators that are typical watermark artifacts
-              cleanedText = cleanedText
-                .replace(/\/GS\d+\s+gs/g, '') // strip transparency state operators
-                .replace(/\/Gs\d+\s+gs/g, '')
-            }
-
-            stream.setContents(new TextEncoder().encode(cleanedText))
+      // 1. Clean Page Contents (Text Watermarks)
+      const contentsRef = page.node.Contents()
+      if (contentsRef) {
+        const contents = pdfDoc.context.lookup(contentsRef)
+        const contentStreams = []
+        if (contents instanceof PDFArray) {
+          for (let idx = 0; idx < contents.size(); idx++) {
+            contentStreams.push(pdfDoc.context.lookup(contents.get(idx)))
           }
+        } else {
+          contentStreams.push(contents)
         }
+        
+        contentStreams.forEach((stream) => {
+          if (stream instanceof PDFStream || stream instanceof PDFRawStream) {
+            cleanStreamText(stream)
+          }
+        })
       }
 
-      // Remove large background image overlays
-      if (removeImages) {
-        const resourcesRef = (page.node as any).Resources()
-        if (resourcesRef) {
-          const resources = pdfDoc.context.lookup(resourcesRef)
-          if (resources instanceof PDFDict) {
-            const xObjectsRef = resources.get(PDFName.of('XObject'))
-            if (xObjectsRef) {
-              const xObjects = pdfDoc.context.lookup(xObjectsRef)
-              if (xObjects instanceof PDFDict) {
-                const keys = xObjects.keys()
-                for (const key of keys) {
-                  const xObjectRef = xObjects.get(key)
-                  if (xObjectRef) {
-                    const xObject = pdfDoc.context.lookup(xObjectRef)
-                    if (xObject && typeof (xObject as any).get === 'function') {
-                      const subtype = (xObject as any).get(PDFName.of('Subtype'))
-                      if (subtype && subtype.toString() === '/Image') {
-                        const widthObj = (xObject as any).get(PDFName.of('Width'))
-                        const heightObj = (xObject as any).get(PDFName.of('Height'))
-                        
-                        const getNum = (o: any) => {
-                          if (!o) return undefined
-                          const resolved = pdfDoc.context.lookup(o)
-                          if (resolved && typeof (resolved as any).asNumber === 'function') {
-                            return (resolved as any).asNumber()
-                          }
-                          if (resolved && typeof (resolved as any).value === 'number') {
-                            return (resolved as any).value
-                          }
-                          return undefined
-                        }
-                        
-                        const width = getNum(widthObj)
-                        const height = getNum(heightObj)
-                        
-                        // Identify large background watermark images
-                        if (width && height && width > 400 && height > 400) {
-                          xObjects.set(key, pdfDoc.context.obj({}))
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+      // 2. Clean Page XObjects recursively (Vector and Image Watermarks)
+      const resourcesRef = (page.node as any).Resources()
+      if (resourcesRef) {
+        const resources = pdfDoc.context.lookup(resourcesRef)
+        if (resources instanceof PDFDict) {
+          const xObjectsRef = resources.get(PDFName.of('XObject'))
+          if (xObjectsRef) {
+            const xObjects = pdfDoc.context.lookup(xObjectsRef)
+            cleanXObjects(xObjects, 1)
           }
         }
       }
