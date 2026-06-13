@@ -150,7 +150,7 @@ export default function RemoveWatermarkPage() {
 
   // PDF Watermark Removal
   const cleanPdf = async (fileBytes: ArrayBuffer, searchStr: string): Promise<Blob> => {
-    const { PDFDocument } = await import('pdf-lib')
+    const { PDFDocument, PDFDict, PDFName } = await import('pdf-lib')
     const pdfDoc = await PDFDocument.load(fileBytes)
     const pages = pdfDoc.getPages()
     const lowercaseSearch = searchStr.toLowerCase()
@@ -195,22 +195,46 @@ export default function RemoveWatermarkPage() {
 
       // Remove large background image overlays
       if (removeImages) {
-        const resources = (page.node as any).Resources()
-        if (resources) {
-          const xObjects = resources.get((page.node as any).context.obj('XObject'))
-          if (xObjects) {
-            const keys = xObjects.keys()
-            for (const key of keys) {
-              const xObject = xObjects.get(key)
-              if (xObject) {
-                const subtype = xObject.get((page.node as any).context.obj('Subtype'))
-                if (subtype && subtype.toString() === '/Image') {
-                  const width = xObject.get((page.node as any).context.obj('Width'))?.value
-                  const height = xObject.get((page.node as any).context.obj('Height'))?.value
-                  
-                  // Identify large background watermark images
-                  if (width && height && width > 400 && height > 400) {
-                    xObjects.set(key, (page.node as any).context.obj({}))
+        const resourcesRef = (page.node as any).Resources()
+        if (resourcesRef) {
+          const resources = pdfDoc.context.lookup(resourcesRef)
+          if (resources instanceof PDFDict) {
+            const xObjectsRef = resources.get(PDFName.of('XObject'))
+            if (xObjectsRef) {
+              const xObjects = pdfDoc.context.lookup(xObjectsRef)
+              if (xObjects instanceof PDFDict) {
+                const keys = xObjects.keys()
+                for (const key of keys) {
+                  const xObjectRef = xObjects.get(key)
+                  if (xObjectRef) {
+                    const xObject = pdfDoc.context.lookup(xObjectRef)
+                    if (xObject && typeof (xObject as any).get === 'function') {
+                      const subtype = (xObject as any).get(PDFName.of('Subtype'))
+                      if (subtype && subtype.toString() === '/Image') {
+                        const widthObj = (xObject as any).get(PDFName.of('Width'))
+                        const heightObj = (xObject as any).get(PDFName.of('Height'))
+                        
+                        const getNum = (o: any) => {
+                          if (!o) return undefined
+                          const resolved = pdfDoc.context.lookup(o)
+                          if (resolved && typeof (resolved as any).asNumber === 'function') {
+                            return (resolved as any).asNumber()
+                          }
+                          if (resolved && typeof (resolved as any).value === 'number') {
+                            return (resolved as any).value
+                          }
+                          return undefined
+                        }
+                        
+                        const width = getNum(widthObj)
+                        const height = getNum(heightObj)
+                        
+                        // Identify large background watermark images
+                        if (width && height && width > 400 && height > 400) {
+                          xObjects.set(key, pdfDoc.context.obj({}))
+                        }
+                      }
+                    }
                   }
                 }
               }
