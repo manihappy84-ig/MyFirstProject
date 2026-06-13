@@ -54,6 +54,16 @@ const TOOLS = [
     badge: 'New',
     badgeColor: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
   },
+  {
+    id: 'study-buddy',
+    icon: '🎓',
+    title: 'AI Study Buddy',
+    description: 'Transform documents into structured chapters, interactive worksheets, custom tests, and gamified flashcards.',
+    href: '/tools/study-buddy',
+    gradient: 'from-indigo-500 via-purple-500 to-pink-500',
+    badge: 'EduTech AI',
+    badgeColor: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
+  },
 ]
 
 export default function Home() {
