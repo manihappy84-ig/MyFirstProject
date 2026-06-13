@@ -36,17 +36,19 @@ export async function POST(request: NextRequest) {
       prompt = `You are a curriculum design specialist. Divide the following learning material text into exactly 10 distinct, sequential chapters or sub-sections.
 If the text is too short, break it up by logical paragraphs or key concepts.
 
-Return a valid JSON array of exactly 10 objects. Each object must have:
+Return a valid JSON object with a single key "chapters" containing an array of exactly 10 chapter objects. Each object must have:
 - "index": a number from 1 to 10
 - "title": a short, descriptive chapter title
 - "contentSummary": a 2-3 sentence summary of what this chapter covers from the text
 - "rawTextChunk": a relevant excerpt or chunk of text from the material that matches this chapter (roughly 1/10th of the input text)
 
 JSON format:
-[
-  { "index": 1, "title": "Chapter Title", "contentSummary": "Summary here...", "rawTextChunk": "excerpt..." },
-  ...
-]
+{
+  "chapters": [
+    { "index": 1, "title": "Chapter Title", "contentSummary": "Summary here...", "rawTextChunk": "excerpt..." },
+    ...
+  ]
+}
 
 Learning material:
 ${text}`;

@@ -126,11 +126,19 @@ export default function StudyBuddyPage() {
       }
 
       const outlineData = await outlineResponse.json()
-      if (!outlineData.success || !Array.isArray(outlineData.data)) {
+      let loadedChapters: Chapter[] = []
+      if (outlineData.success) {
+        if (Array.isArray(outlineData.data)) {
+          loadedChapters = outlineData.data
+        } else if (outlineData.data && Array.isArray(outlineData.data.chapters)) {
+          loadedChapters = outlineData.data.chapters
+        }
+      }
+
+      if (loadedChapters.length === 0) {
         throw new Error(outlineData.error || 'Invalid outline payload returned by AI.')
       }
 
-      const loadedChapters: Chapter[] = outlineData.data
       setChapters(loadedChapters)
       setActiveChapterIndex(1)
       setProgress(100)
