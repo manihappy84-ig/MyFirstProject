@@ -47,7 +47,7 @@ interface TestData {
   questions: MCQQuestion[]
 }
 
-type Stage = 'idle' | 'uploading' | 'parsing' | 'structuring' | 'workspace' | 'error'
+type Stage = 'idle' | 'uploading' | 'parsing' | 'ocr_processing' | 'structuring' | 'workspace' | 'error'
 
 export default function StudyBuddyPage() {
   const [file, setFile] = useState<File | null>(null)
@@ -90,6 +90,15 @@ export default function StudyBuddyPage() {
   const [streak, setStreak] = useState<number>(0)
   const [highestStreak, setHighestStreak] = useState<number>(0)
 
+  // Local OCR progress state
+  const [ocrProgress, setOcrProgress] = useState({
+    stage: 'idle',
+    current: 0,
+    total: 0,
+    percent: 0,
+    label: '',
+  })
+
   // PDF Text extraction
   const handleFileSelect = useCallback((f: File) => {
     setFile(f)
@@ -100,27 +109,8 @@ export default function StudyBuddyPage() {
     setTests({})
   }, [])
 
-  const handleStartProcess = async () => {
-    if (!file) return
-    setError(null)
-    setStage('uploading')
-    setStageLabel('Reading your learning material…')
-    setProgress(15)
-
+  const generateOutline = async (rawText: string) => {
     try {
-      // Step 1: Parse PDF to Text
-      setStage('parsing')
-      setProgress(35)
-      const res = await convertPdfToText(file)
-      
-      if (!res.success || !res.data?.text) {
-        throw new Error(res.error || 'Failed to extract text from this document. Please verify it contains digital text.')
-      }
-
-      const rawText = res.data.text
-      setExtractedText(rawText)
-
-      // Step 2: Divide into 10 Chapters
       setStage('structuring')
       setStageLabel('Creating 10 logical chapters from the lesson…')
       setProgress(60)
@@ -140,12 +130,139 @@ export default function StudyBuddyPage() {
         throw new Error(outlineData.error || 'Invalid outline payload returned by AI.')
       }
 
-      // Safeguard: Ensure exactly 10 chapters are listed
       const loadedChapters: Chapter[] = outlineData.data
       setChapters(loadedChapters)
       setActiveChapterIndex(1)
       setProgress(100)
       setStage('workspace')
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'An unexpected error occurred during outline generation.')
+      setStage('error')
+    }
+  }
+
+  const runClientSideOcr = async () => {
+    if (!file) return
+    setError(null)
+    setStage('ocr_processing')
+    setOcrProgress({
+      stage: 'loading_pdfjs',
+      current: 0,
+      total: 0,
+      percent: 0,
+      label: 'Loading high-accuracy OCR engine…',
+    })
+
+    try {
+      const pdfjs = await new Promise<any>((resolve, reject) => {
+        if ((window as any).pdfjsLib) {
+          resolve((window as any).pdfjsLib)
+          return
+        }
+        const script = document.createElement('script')
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+        script.onload = () => resolve((window as any).pdfjsLib)
+        script.onerror = () => reject(new Error('Failed to load local PDF rendering component.'))
+        document.body.appendChild(script)
+      })
+
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+      setOcrProgress((prev) => ({ ...prev, label: 'Reading PDF pages…' }))
+      const arrayBuffer = await file.arrayBuffer()
+      const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
+      const pdf = await loadingTask.promise
+      const total = pdf.numPages
+
+      setOcrProgress((prev) => ({
+        ...prev,
+        total,
+        label: `Parsed document successfully (${total} pages found). Initializing OCR engine…`,
+      }))
+
+      const Tesseract = (await import('tesseract.js')).default
+
+      let accumulatedText = ''
+
+      for (let pageNum = 1; pageNum <= total; pageNum++) {
+        setOcrProgress((prev) => ({
+          ...prev,
+          stage: 'rendering_page',
+          current: pageNum,
+          percent: 0,
+          label: `Rendering Page ${pageNum} of ${total} to high-resolution image…`,
+        }))
+
+        const page = await pdf.getPage(pageNum)
+        const viewport = page.getViewport({ scale: 2.0 })
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        canvas.height = viewport.height
+        canvas.width = viewport.width
+
+        if (!context) {
+          throw new Error('Canvas render context error.')
+        }
+
+        await page.render({ canvasContext: context, viewport }).promise
+        const dataUrl = canvas.toDataURL('image/png')
+
+        setOcrProgress((prev) => ({
+          ...prev,
+          stage: 'running_ocr',
+          label: `Scanning characters on Page ${pageNum} of ${total}…`,
+        }))
+
+        const ocrResult = await Tesseract.recognize(dataUrl, 'eng', {
+          logger: (m: any) => {
+            if (m.status === 'recognizing text') {
+              const pct = Math.round(m.progress * 100)
+              setOcrProgress((prev) => ({
+                ...prev,
+                percent: pct,
+                label: `Scanning characters on Page ${pageNum} of ${total}… (${pct}%)`,
+              }))
+            }
+          },
+        })
+
+        accumulatedText += ocrResult.data.text + `\n\n--- Page ${pageNum} Break ---\n\n`
+      }
+
+      const finalText = accumulatedText.trim().replace(new RegExp(`\\n\\n--- Page ${total} Break ---\\n\\n$`), '')
+      setExtractedText(finalText)
+
+      await generateOutline(finalText)
+    } catch (err: any) {
+      console.error('OCR failed:', err)
+      setError(err.message || 'Browser-side OCR extraction failed. Please try again.')
+      setStage('error')
+    }
+  }
+
+  const handleStartProcess = async () => {
+    if (!file) return
+    setError(null)
+    setStage('uploading')
+    setStageLabel('Reading your learning material…')
+    setProgress(15)
+
+    try {
+      // Step 1: Parse PDF to Text
+      setStage('parsing')
+      setProgress(35)
+      const res = await convertPdfToText(file)
+      
+      if (res.success && res.data?.text) {
+        setExtractedText(res.data.text)
+        await generateOutline(res.data.text)
+      } else if (res.error?.includes('OCR is required') || res.error?.includes('No text could be extracted') || res.error?.includes('422')) {
+        // Scanned PDF: Automatically trigger Browser OCR
+        await runClientSideOcr()
+      } else {
+        throw new Error(res.error || 'Failed to extract text from this document. Please verify it contains digital text.')
+      }
     } catch (err: any) {
       console.error(err)
       setError(err.message || 'An unexpected error occurred during processing.')
@@ -434,6 +551,66 @@ export default function StudyBuddyPage() {
                 </span>
                 <span className={stage === 'structuring' ? 'text-indigo-400' : 'text-gray-500'}>Dividing into 10 Chapters</span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── STAGE: OCR PROCESSING SCREEN ── */}
+        {stage === 'ocr_processing' && (
+          <div className="max-w-xl mx-auto bg-slate-900/60 border border-white/10 rounded-3xl p-10 text-center relative overflow-hidden shadow-2xl glass">
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-pink-400 to-indigo-500 animate-scan" />
+            
+            <div className="flex justify-center mb-6">
+              <div className="relative w-16 h-16 flex items-center justify-center bg-indigo-500/10 border border-indigo-500/30 rounded-2xl text-3xl shadow-lg animate-pulse">
+                🔍
+              </div>
+            </div>
+            <h3 className="text-xl font-bold mb-1">OCR Scan Active</h3>
+            <p className="text-pink-400 text-xs font-bold tracking-wider uppercase mb-4">Processing Locally In-Browser</p>
+            
+            <p className="text-gray-300 text-sm max-w-md mx-auto mb-6">
+              {ocrProgress.label}
+            </p>
+
+            {ocrProgress.total > 0 && (
+              <div className="text-xs text-gray-500 mb-8 font-medium">
+                Scanning Page <span className="text-white font-bold">{ocrProgress.current}</span> of <span className="text-white font-bold">{ocrProgress.total}</span>
+              </div>
+            )}
+            
+            <div className="max-w-md mx-auto">
+              <ProgressBar progress={ocrProgress.percent} color="purple" />
+              <div className="flex justify-between text-[10px] text-gray-500 mt-2 font-mono tracking-wider">
+                <span>PROGRESS</span>
+                <span>{ocrProgress.percent}%</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── STAGE: ERROR SCREEN ── */}
+        {stage === 'error' && (
+          <div className="max-w-xl mx-auto bg-slate-900/60 border border-red-500/20 rounded-3xl p-10 text-center relative overflow-hidden shadow-2xl glass animate-fade-in">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 flex items-center justify-center bg-red-500/10 border border-red-500/30 rounded-2xl text-3xl text-red-500 shadow-lg shadow-red-500/10">
+                ⚠️
+              </div>
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">Generation Failed</h3>
+            <p className="text-red-400 text-xs mb-8 bg-red-500/10 border border-red-500/20 p-4 rounded-xl leading-relaxed">
+              {error || 'An unexpected error occurred during processing.'}
+            </p>
+            <div className="flex gap-4 justify-center">
+              <button
+                onClick={() => {
+                  setStage('idle')
+                  setFile(null)
+                  setError(null)
+                }}
+                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-pink-600 hover:opacity-95 text-white font-extrabold rounded-xl text-sm transition"
+              >
+                Choose Another File
+              </button>
             </div>
           </div>
         )}
