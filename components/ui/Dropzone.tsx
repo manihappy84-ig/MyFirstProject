@@ -4,6 +4,8 @@ import { useState, useRef, useCallback } from 'react'
 
 interface DropzoneProps {
   onFileSelect: (file: File) => void
+  onFilesSelect?: (files: File[]) => void
+  multiple?: boolean
   disabled?: boolean
   maxSizeMB?: number
   onError?: (msg: string) => void
@@ -14,6 +16,8 @@ interface DropzoneProps {
 
 export function Dropzone({
   onFileSelect,
+  onFilesSelect,
+  multiple = false,
   disabled = false,
   maxSizeMB = 50,
   onError,
@@ -25,25 +29,41 @@ export function Dropzone({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validateAndSelect = useCallback(
-    (file: File) => {
-      if (accept.includes('image')) {
-        if (!file.type.startsWith('image/')) {
-          onError?.('Please select a valid image file.')
-          return
+    (filesList: File[]) => {
+      const validFiles: File[] = []
+      
+      for (const file of filesList) {
+        if (accept.includes('image')) {
+          if (!file.type.startsWith('image/')) {
+            onError?.(`"${file.name}" is not a valid image file.`)
+            continue
+          }
+        } else {
+          const nameLower = file.name.toLowerCase()
+          const isPdf = file.type.includes('pdf') || nameLower.endsWith('.pdf')
+          const isPptx = nameLower.endsWith('.pptx') || file.type.includes('presentation')
+          
+          if (!isPdf && !isPptx) {
+            onError?.(`"${file.name}" is not a valid file format.`)
+            continue
+          }
         }
-      } else {
-        if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
-          onError?.('Please select a valid PDF file.')
-          return
+        if (file.size > maxSizeMB * 1024 * 1024) {
+          onError?.(`"${file.name}" is too large. Maximum size is ${maxSizeMB}MB.`)
+          continue
+        }
+        validFiles.push(file)
+      }
+
+      if (validFiles.length > 0) {
+        if (multiple && onFilesSelect) {
+          onFilesSelect(validFiles)
+        } else {
+          onFileSelect(validFiles[0])
         }
       }
-      if (file.size > maxSizeMB * 1024 * 1024) {
-        onError?.(`File is too large. Maximum size is ${maxSizeMB}MB.`)
-        return
-      }
-      onFileSelect(file)
     },
-    [onFileSelect, maxSizeMB, onError, accept]
+    [onFileSelect, onFilesSelect, multiple, maxSizeMB, onError, accept]
   )
 
   const handleDrag = (e: React.DragEvent) => {
@@ -58,13 +78,13 @@ export function Dropzone({
     e.stopPropagation()
     setIsDragging(false)
     if (disabled) return
-    const file = e.dataTransfer.files[0]
-    if (file) validateAndSelect(file)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) validateAndSelect(files)
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) validateAndSelect(file)
+    const files = Array.from(e.target.files || [])
+    if (files.length > 0) validateAndSelect(files)
     e.target.value = ''
   }
 
@@ -97,6 +117,7 @@ export function Dropzone({
         onChange={handleChange}
         className="hidden"
         disabled={disabled}
+        multiple={multiple}
         aria-hidden
       />
 
@@ -122,12 +143,12 @@ export function Dropzone({
 
         <div>
           <p className="text-xl font-semibold text-white mb-1">
-            {isDragging ? `Drop your ${dragLabel} here!` : `Drag & Drop your ${dragLabel}`}
+            {isDragging ? `Drop your files here!` : `Drag & Drop your files`}
           </p>
           <p className="text-gray-400">
             or{' '}
             <span className="text-blue-400 font-semibold underline underline-offset-2">
-              browse to choose a file
+              browse to choose files
             </span>
           </p>
           <p className="text-xs text-gray-500 mt-3">{acceptLabel} • Maximum {maxSizeMB}MB</p>

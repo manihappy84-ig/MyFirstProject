@@ -1,4 +1,4 @@
-'use client'
+'use client' // Test write access
 
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
@@ -15,33 +15,43 @@ interface ProcessProgress {
 }
 
 export default function RemoveWatermarkPage() {
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [stage, setStage] = useState<Stage>('idle')
   const [progress, setProgress] = useState<ProcessProgress>({ percent: 0, label: '' })
   const [error, setError] = useState<string | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
-  const [cleanedBlob, setCleanedBlob] = useState<Blob | null>(null)
+  const [cleanedFiles, setCleanedFiles] = useState<{ name: string; blob: Blob }[]>([])
 
   // Options
   const [watermarkText, setWatermarkText] = useState('CONFIDENTIAL')
   const [removeImages, setRemoveImages] = useState(true)
   const [smartClean, setSmartClean] = useState(true)
 
-  const handleFileSelect = useCallback((f: File) => {
-    setFile(f)
+  const handleFilesSelect = useCallback((newFiles: File[]) => {
+    setFiles((prev) => [...prev, ...newFiles])
     setStage('file_selected')
     setError(null)
     setFileError(null)
-    setCleanedBlob(null)
+    setCleanedFiles([])
     setProgress({ percent: 0, label: '' })
   }, [])
 
+  const handleRemoveFile = (index: number) => {
+    setFiles((prev) => {
+      const updated = prev.filter((_, i) => i !== index)
+      if (updated.length === 0) {
+        setStage('idle')
+      }
+      return updated
+    })
+  }
+
   const handleReset = () => {
-    setFile(null)
+    setFiles([])
     setStage('idle')
     setError(null)
     setFileError(null)
-    setCleanedBlob(null)
+    setCleanedFiles([])
     setProgress({ percent: 0, label: '' })
   }
 
@@ -76,7 +86,7 @@ export default function RemoveWatermarkPage() {
   }
 
   // PowerPoint PPTX Watermark Removal
-  const cleanPptx = async (fileBytes: ArrayBuffer, searchStr: string): Promise<Blob> => {
+  const cleanPptx = async (fileBytes: ArrayBuffer, searchStr: string, onProgress?: (p: ProcessProgress) => void): Promise<Blob> => {
     const JSZip = await loadJSZip()
     const zip = await JSZip.loadAsync(fileBytes)
     const lowercaseSearch = searchStr.toLowerCase()
@@ -97,7 +107,7 @@ export default function RemoveWatermarkPage() {
     for (let i = 0; i < totalFiles; i++) {
       const filePath = filesToProcess[i]
       const percent = Math.round(((i + 1) / totalFiles) * 80)
-      setProgress({
+      onProgress?.({
         percent,
         label: `Scanning PowerPoint file shapes (${percent}%)…`
       })
@@ -158,13 +168,13 @@ export default function RemoveWatermarkPage() {
       zip.file(filePath, newXml)
     }
 
-    setProgress({ percent: 90, label: 'Compiling PPTX container…' })
+    onProgress?.({ percent: 90, label: 'Compiling PPTX container…' })
     const outputBlob = await zip.generateAsync({ type: 'blob' })
     return outputBlob
   }
 
   // PDF Watermark Removal
-  const cleanPdf = async (fileBytes: ArrayBuffer, searchStr: string): Promise<Blob> => {
+  const cleanPdf = async (fileBytes: ArrayBuffer, searchStr: string, onProgress?: (p: ProcessProgress) => void): Promise<Blob> => {
     const { PDFDocument, PDFDict, PDFName, PDFArray, PDFStream, PDFRawStream } = await import('pdf-lib')
     const pako = await loadPako()
     const pdfDoc = await PDFDocument.load(fileBytes)
@@ -309,7 +319,7 @@ export default function RemoveWatermarkPage() {
     for (let i = 0; i < totalPages; i++) {
       const page = pages[i]
       const percent = Math.round(((i + 1) / totalPages) * 80)
-      setProgress({
+      onProgress?.({
         percent,
         label: `Scanning page ${i + 1} of ${totalPages} (${percent}%)…`
       })
@@ -348,29 +358,48 @@ export default function RemoveWatermarkPage() {
       }
     }
 
-    setProgress({ percent: 90, label: 'Compiling PDF document layout…' })
+    onProgress?.({ percent: 90, label: 'Compiling PDF document layout…' })
     const outputBytes = await pdfDoc.save()
     return new Blob([outputBytes as any], { type: 'application/pdf' })
   }
 
   const handleProcess = async () => {
-    if (!file) return
+    if (files.length === 0) return
     setError(null)
     setStage('processing')
-    setProgress({ percent: 10, label: 'Initializing file clean stream…' })
+    setProgress({ percent: 0, label: 'Initializing file clean stream…' })
+
+    const totalFiles = files.length
+    const results: { name: string; blob: Blob }[] = []
 
     try {
-      const bytes = await file.arrayBuffer()
-      let resultBlob: Blob
+      for (let i = 0; i < totalFiles; i++) {
+        const activeFile = files[i]
+        const basePercent = (i / totalFiles) * 100
 
-      if (file.name.endsWith('.pptx')) {
-        resultBlob = await cleanPptx(bytes, watermarkText)
-      } else {
-        resultBlob = await cleanPdf(bytes, watermarkText)
+        const fileOnProgress = (fileProgress: ProcessProgress) => {
+          const globalPercent = Math.round(basePercent + (fileProgress.percent / totalFiles))
+          setProgress({
+            percent: globalPercent,
+            label: `[File ${i + 1}/${totalFiles}] ${activeFile.name}: ${fileProgress.label}`
+          })
+        }
+
+        fileOnProgress({ percent: 5, label: 'Reading file buffer…' })
+        const bytes = await activeFile.arrayBuffer()
+        let resultBlob: Blob
+
+        if (activeFile.name.endsWith('.pptx')) {
+          resultBlob = await cleanPptx(bytes, watermarkText, fileOnProgress)
+        } else {
+          resultBlob = await cleanPdf(bytes, watermarkText, fileOnProgress)
+        }
+
+        results.push({ name: activeFile.name, blob: resultBlob })
       }
 
-      setProgress({ percent: 100, label: 'Watermarks successfully removed!' })
-      setCleanedBlob(resultBlob)
+      setProgress({ percent: 100, label: 'All files successfully cleaned!' })
+      setCleanedFiles(results)
       setStage('done')
     } catch (err: any) {
       console.error('Watermark removal error:', err)
@@ -379,11 +408,33 @@ export default function RemoveWatermarkPage() {
     }
   }
 
-  const handleDownload = () => {
-    if (!cleanedBlob || !file) return
-    const prefix = file.name.replace(/\.[^/.]+$/, '')
-    const ext = file.name.endsWith('.pptx') ? 'pptx' : 'pdf'
-    downloadBlob(cleanedBlob, `${prefix}_cleaned.${ext}`)
+  const handleDownload = async () => {
+    if (cleanedFiles.length === 0) return
+
+    if (cleanedFiles.length === 1) {
+      const fileResult = cleanedFiles[0]
+      const prefix = fileResult.name.replace(/\.[^/.]+$/, '')
+      const ext = fileResult.name.endsWith('.pptx') ? 'pptx' : 'pdf'
+      downloadBlob(fileResult.blob, `${prefix}_cleaned.${ext}`)
+    } else {
+      try {
+        setProgress({ percent: 95, label: 'Creating ZIP archive…' })
+        const JSZip = await loadJSZip()
+        const zip = new JSZip()
+
+        cleanedFiles.forEach((fileResult) => {
+          const prefix = fileResult.name.replace(/\.[^/.]+$/, '')
+          const ext = fileResult.name.endsWith('.pptx') ? 'pptx' : 'pdf'
+          zip.file(`${prefix}_cleaned.${ext}`, fileResult.blob)
+        })
+
+        const zipBlob = await zip.generateAsync({ type: 'blob' })
+        downloadBlob(zipBlob, 'watermarks_removed.zip')
+      } catch (err: any) {
+        console.error('ZIP generation error:', err)
+        setError('Failed to generate ZIP archive.')
+      }
+    }
   }
 
   return (
@@ -416,7 +467,7 @@ export default function RemoveWatermarkPage() {
           <p className="text-gray-400 text-lg">Strip text or background image watermarks from PDF and PPTX files</p>
         </div>
 
-        {stage === 'done' && cleanedBlob ? (
+        {stage === 'done' && cleanedFiles.length > 0 ? (
           /* Finished State */
           <div className="max-w-xl mx-auto bg-white/5 border border-white/10 rounded-2xl p-8 text-center shadow-xl animate-fade-in-up">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-green-500/10 border border-green-500/20 text-3xl mb-6">
@@ -424,7 +475,7 @@ export default function RemoveWatermarkPage() {
             </div>
             <h2 className="text-2xl font-bold text-white mb-2">Watermark Stripped!</h2>
             <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-              Your document has been cleaned. The watermark layers have been filtered out client-side with full data privacy.
+              Your documents have been cleaned. The watermark layers have been filtered out client-side with full data privacy.
             </p>
 
             <div className="space-y-4">
@@ -432,7 +483,7 @@ export default function RemoveWatermarkPage() {
                 onClick={handleDownload}
                 className="w-full py-4 px-6 bg-gradient-to-r from-rose-600 to-pink-600 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2"
               >
-                <span>💾</span> Download Cleaned File
+                <span>💾</span> {cleanedFiles.length > 1 ? 'Download Cleaned Files (ZIP)' : 'Download Cleaned File'}
               </button>
 
               <button
@@ -542,11 +593,13 @@ export default function RemoveWatermarkPage() {
               {/* Upload Stage */}
               {stage === 'idle' && (
                 <Dropzone
-                  onFileSelect={handleFileSelect}
+                  onFileSelect={() => {}}
+                  onFilesSelect={handleFilesSelect}
+                  multiple={true}
                   onError={(msg) => setFileError(msg)}
                   accept=".pdf,.pptx"
                   acceptLabel="PDF files (.pdf) and PowerPoint files (.pptx) only"
-                  dragLabel="Document"
+                  dragLabel="Documents"
                 />
               )}
 
@@ -570,29 +623,63 @@ export default function RemoveWatermarkPage() {
               )}
 
               {/* Ready to process */}
-              {file && stage === 'file_selected' && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6 shadow-xl">
-                  <div className="flex items-center gap-4 border-b border-white/10 pb-4">
-                    <div className="w-14 h-14 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center justify-center text-3xl">
-                      {file.name.endsWith('.pptx') ? '📊' : '📕'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold truncate text-lg">{file.name}</p>
-                      <p className="text-gray-400 text-sm">{(file.size / 1024).toFixed(1)} KB · Document</p>
-                    </div>
+              {files.length > 0 && stage === 'file_selected' && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6 shadow-xl animate-fade-in-up">
+                  <h3 className="text-white font-semibold text-lg border-b border-white/10 pb-3 flex justify-between items-center">
+                    <span>Queued Files ({files.length})</span>
                     <button
                       onClick={handleReset}
-                      className="text-gray-500 hover:text-white transition p-2"
-                      aria-label="Remove file"
+                      className="text-xs text-gray-400 hover:text-rose-400 transition"
                     >
-                      ✕
+                      Clear All
+                    </button>
+                  </h3>
+                  
+                  <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                    {files.map((f, idx) => (
+                      <div key={idx} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl p-3 hover:bg-white/10 transition group">
+                        <div className="w-10 h-10 bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center justify-center text-xl">
+                          {f.name.endsWith('.pptx') ? '📊' : '📕'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm font-medium truncate">{f.name}</p>
+                          <p className="text-gray-400 text-xs">{(f.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveFile(idx)}
+                          className="text-gray-500 hover:text-rose-400 transition p-1 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                          aria-label={`Remove ${f.name}`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Add more files browse action */}
+                  <div className="pt-2">
+                    <button
+                      onClick={() => {
+                        const input = document.createElement('input')
+                        input.type = 'file'
+                        input.multiple = true
+                        input.accept = '.pdf,.pptx'
+                        input.onchange = (e: any) => {
+                          const newFiles = Array.from(e.target.files || []) as File[]
+                          if (newFiles.length > 0) handleFilesSelect(newFiles)
+                        }
+                        input.click()
+                      }}
+                      className="w-full py-2.5 border border-dashed border-white/25 rounded-xl text-xs text-gray-400 hover:text-white hover:border-blue-400/50 hover:bg-white/5 transition flex items-center justify-center gap-2"
+                    >
+                      ➕ Add More Files
                     </button>
                   </div>
 
                   <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-4 flex gap-3 text-xs text-rose-300 leading-relaxed">
                     <span>💡</span>
                     <div>
-                      Click the button below to strip matching text shapes and background overlays. All data remains in your browser memory.
+                      Click the button below to strip matching text shapes and background overlays. All files are processed sequentially in your browser memory.
                     </div>
                   </div>
 
@@ -601,7 +688,7 @@ export default function RemoveWatermarkPage() {
                       onClick={handleProcess}
                       className="flex-1 py-4 px-6 bg-gradient-to-r from-rose-600 to-pink-600 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-rose-500/25 text-base flex items-center justify-center gap-2"
                     >
-                      ✨ Remove Watermarks
+                      ✨ Remove Watermarks ({files.length} {files.length === 1 ? 'file' : 'files'})
                     </button>
 
                     <button
@@ -622,3 +709,4 @@ export default function RemoveWatermarkPage() {
     </div>
   )
 }
+
