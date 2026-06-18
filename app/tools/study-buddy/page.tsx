@@ -7,7 +7,17 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Spinner } from '@/components/ui/Spinner'
 import { convertPdfToText } from '@/lib/services/converterService'
 
+interface Subject {
+  id: string
+  name: string
+  description: string
+  created_at: string
+  chaptersCount?: number
+}
+
 interface Chapter {
+  id?: string
+  subject_id?: string
   index: number
   title: string
   contentSummary: string
@@ -44,6 +54,7 @@ interface MCQQuestion {
 }
 
 interface TestData {
+  id?: string
   questions: MCQQuestion[]
 }
 
@@ -56,6 +67,15 @@ export default function StudyBuddyPage() {
   const [stageLabel, setStageLabel] = useState('')
   const [extractedText, setExtractedText] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // SaaS Database states
+  const [subjects, setSubjects] = useState<Subject[]>([])
+  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null)
+  const [dbMode, setDbMode] = useState<'supabase' | 'memory' | 'loading'>('loading')
+  const [loadingSubjects, setLoadingSubjects] = useState<boolean>(true)
+  const [uploadMode, setUploadMode] = useState<'pdf' | 'paste'>('pdf')
+  const [subjectTitleInput, setSubjectTitleInput] = useState('')
+  const [pastedText, setPastedText] = useState('')
 
   // EduTech structured state
   const [chapters, setChapters] = useState<Chapter[]>([])
@@ -74,6 +94,10 @@ export default function StudyBuddyPage() {
   // Interactive Worksheet State
   const [revealWorksheetAnswers, setRevealWorksheetAnswers] = useState<boolean>(false)
   const [expandedDiscussionQ, setExpandedDiscussionQ] = useState<Record<number, boolean>>({})
+  
+  // Interactive Fill-in-the-blank guesses
+  const [fillBlankGuesses, setFillBlankGuesses] = useState<Record<string, string>>({})
+  const [fillBlankFeedback, setFillBlankFeedback] = useState<Record<string, 'correct' | 'incorrect' | null>>({})
 
   // Interactive Test State
   const [testActive, setTestActive] = useState<boolean>(false)
@@ -82,6 +106,8 @@ export default function StudyBuddyPage() {
   const [testScore, setTestScore] = useState<number>(0)
   const [testFinished, setTestFinished] = useState<boolean>(false)
   const [showCelebration, setShowCelebration] = useState<boolean>(false)
+  const [selectedAnswersLog, setSelectedAnswersLog] = useState<number[]>([])
+  const [savingAttempt, setSavingAttempt] = useState<boolean>(false)
 
   // Interactive Quiz / Flashcards State
   const [activeFlashcardIdx, setActiveFlashcardIdx] = useState<number>(0)
@@ -99,6 +125,59 @@ export default function StudyBuddyPage() {
     label: '',
   })
 
+  // Fetch subjects at start
+  useEffect(() => {
+    fetchSubjects()
+  }, [])
+
+  const fetchSubjects = async () => {
+    setLoadingSubjects(true)
+    try {
+      const res = await fetch('/api/study-buddy/subjects')
+      const data = await res.json()
+      if (data.success) {
+        setSubjects(data.subjects || [])
+        setDbMode(data.mode)
+      } else {
+        setError(data.error || 'Failed to list courses from database')
+      }
+    } catch (err: any) {
+      console.error(err)
+      setError('Could not connect to the study buddy server endpoint.')
+    } finally {
+      setLoadingSubjects(false)
+    }
+  }
+
+  // Select Subject from dashboard catalog
+  const selectSubject = async (subject: Subject) => {
+    setSelectedSubject(subject)
+    setChapters([])
+    setWorksheets({})
+    setTests({})
+    setStage('uploading')
+    setStageLabel('Loading course materials from database…')
+    setProgress(30)
+
+    try {
+      const res = await fetch(`/api/study-buddy/subjects/${subject.id}`)
+      const data = await res.json()
+      if (data.success) {
+        setProgress(70)
+        setChapters(data.chapters || [])
+        setActiveChapterIndex(1)
+        setProgress(100)
+        setStage('workspace')
+      } else {
+        throw new Error(data.error || 'Failed to fetch chapters for this course')
+      }
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'Error occurred loading selected course.')
+      setStage('error')
+    }
+  }
+
   // PDF Text extraction
   const handleFileSelect = useCallback((f: File) => {
     setFile(f)
@@ -109,16 +188,16 @@ export default function StudyBuddyPage() {
     setTests({})
   }, [])
 
-  const generateOutline = async (rawText: string) => {
+  const generateOutline = async (rawText: string, titleName: string) => {
     try {
       setStage('structuring')
-      setStageLabel('Creating 10 logical chapters from the lesson…')
+      setStageLabel('Dividing lesson material into 10 logical chapters…')
       setProgress(60)
 
-      const outlineResponse = await fetch('/api/ai/edutech', {
+      const outlineResponse = await fetch('/api/study-buddy/subjects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: rawText, action: 'outline' })
+        body: JSON.stringify({ name: titleName, rawText })
       })
 
       if (!outlineResponse.ok) {
@@ -126,26 +205,29 @@ export default function StudyBuddyPage() {
       }
 
       const outlineData = await outlineResponse.json()
-      let loadedChapters: Chapter[] = []
-      if (outlineData.success) {
-        if (Array.isArray(outlineData.data)) {
-          loadedChapters = outlineData.data
-        } else if (outlineData.data && Array.isArray(outlineData.data.chapters)) {
-          loadedChapters = outlineData.data.chapters
+      
+      if (outlineData.success && outlineData.subject) {
+        setProgress(90)
+        await fetchSubjects()
+        
+        // Load the chapters for this newly generated subject
+        const detailRes = await fetch(`/api/study-buddy/subjects/${outlineData.subject.id}`)
+        const detailData = await detailRes.json()
+        if (detailData.success) {
+          setSelectedSubject(outlineData.subject)
+          setChapters(detailData.chapters || [])
+          setActiveChapterIndex(1)
+          setProgress(100)
+          setStage('workspace')
+        } else {
+          throw new Error(detailData.error || 'Failed to load chapters for new subject')
         }
+      } else {
+        throw new Error(outlineData.error || 'Invalid outline response payload.')
       }
-
-      if (loadedChapters.length === 0) {
-        throw new Error(outlineData.error || 'Invalid outline payload returned by AI.')
-      }
-
-      setChapters(loadedChapters)
-      setActiveChapterIndex(1)
-      setProgress(100)
-      setStage('workspace')
     } catch (err: any) {
       console.error(err)
-      setError(err.message || 'An unexpected error occurred during outline generation.')
+      setError(err.message || 'An unexpected error occurred during syllabus outline generation.')
       setStage('error')
     }
   }
@@ -190,7 +272,6 @@ export default function StudyBuddyPage() {
       }))
 
       const Tesseract = (await import('tesseract.js')).default
-
       let accumulatedText = ''
 
       for (let pageNum = 1; pageNum <= total; pageNum++) {
@@ -241,7 +322,7 @@ export default function StudyBuddyPage() {
       const finalText = accumulatedText.trim().replace(new RegExp(`\\n\\n--- Page ${total} Break ---\\n\\n$`), '')
       setExtractedText(finalText)
 
-      await generateOutline(finalText)
+      await generateOutline(finalText, file.name.replace(/\.pdf$/i, ''))
     } catch (err: any) {
       console.error('OCR failed:', err)
       setError(err.message || 'Browser-side OCR extraction failed. Please try again.')
@@ -257,16 +338,14 @@ export default function StudyBuddyPage() {
     setProgress(15)
 
     try {
-      // Step 1: Parse PDF to Text
       setStage('parsing')
       setProgress(35)
       const res = await convertPdfToText(file)
       
       if (res.success && res.data?.text) {
         setExtractedText(res.data.text)
-        await generateOutline(res.data.text)
+        await generateOutline(res.data.text, file.name.replace(/\.pdf$/i, ''))
       } else if (res.error?.includes('OCR is required') || res.error?.includes('No text could be extracted') || res.error?.includes('422')) {
-        // Scanned PDF: Automatically trigger Browser OCR
         await runClientSideOcr()
       } else {
         throw new Error(res.error || 'Failed to extract text from this document. Please verify it contains digital text.')
@@ -278,31 +357,50 @@ export default function StudyBuddyPage() {
     }
   }
 
+  const handlePasteSubmit = async () => {
+    if (!subjectTitleInput.trim()) {
+      setError('Please specify a course title')
+      return
+    }
+    if (pastedText.trim().length < 200) {
+      setError('Please paste at least 200 characters of notes/textbooks')
+      return
+    }
+
+    setError(null)
+    setStage('uploading')
+    setStageLabel('Reading your pasted study notes…')
+    setProgress(20)
+    setExtractedText(pastedText)
+
+    try {
+      await generateOutline(pastedText, subjectTitleInput.trim())
+      setPastedText('')
+      setSubjectTitleInput('')
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'Failed to process pasted text notes.')
+      setStage('error')
+    }
+  }
+
   // Dynamic Loader for active chapter's Worksheet
   const fetchWorksheet = async (chapterIdx: number) => {
     if (worksheets[chapterIdx] || loadingWorksheet) return
     setLoadingWorksheet(true)
     setRevealWorksheetAnswers(false)
     setExpandedDiscussionQ({})
+    setFillBlankGuesses({})
+    setFillBlankFeedback({})
 
     const activeCh = chapters.find(c => c.index === chapterIdx)
-    const textToProcess = activeCh ? activeCh.rawTextChunk : extractedText.substring(0, 3000)
+    const chapterId = activeCh?.id || 'missing-chapter-id'
 
     try {
-      const response = await fetch('/api/ai/edutech', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: textToProcess,
-          action: 'worksheet',
-          chapterIndex: chapterIdx,
-          chapterTitle: activeCh?.title || `Chapter ${chapterIdx}`
-        })
-      })
-
+      const response = await fetch(`/api/study-buddy/chapters/${chapterId}/worksheet`)
       const result = await response.json()
-      if (result.success && result.data) {
-        setWorksheets(prev => ({ ...prev, [chapterIdx]: result.data }))
+      if (result.success && result.worksheet) {
+        setWorksheets(prev => ({ ...prev, [chapterIdx]: result.worksheet }))
       } else {
         throw new Error(result.error || 'Failed to fetch worksheet')
       }
@@ -322,26 +420,17 @@ export default function StudyBuddyPage() {
     setTestFinished(false)
     setCurrentQuestionIdx(0)
     setSelectedAnswerIdx(null)
+    setSelectedAnswersLog([])
     setTestScore(0)
 
     const activeCh = chapters.find(c => c.index === chapterIdx)
-    const textToProcess = activeCh ? activeCh.rawTextChunk : extractedText.substring(0, 3000)
+    const chapterId = activeCh?.id || 'missing-chapter-id'
 
     try {
-      const response = await fetch('/api/ai/edutech', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: textToProcess,
-          action: 'test',
-          chapterIndex: chapterIdx,
-          chapterTitle: activeCh?.title || `Chapter ${chapterIdx}`
-        })
-      })
-
+      const response = await fetch(`/api/study-buddy/chapters/${chapterId}/test`)
       const result = await response.json()
-      if (result.success && result.data) {
-        setTests(prev => ({ ...prev, [chapterIdx]: result.data }))
+      if (result.success && result.test) {
+        setTests(prev => ({ ...prev, [chapterIdx]: result.test }))
       } else {
         throw new Error(result.error || 'Failed to fetch test questions')
       }
@@ -366,6 +455,29 @@ export default function StudyBuddyPage() {
     }
   }, [stage, activeChapterIndex, activeTab, chapters])
 
+  // Handles logging student test scores
+  const saveTestAttempt = async (finalScore: number, answersLog: number[]) => {
+    const activeTestData = tests[activeChapterIndex]
+    if (!activeTestData || !activeTestData.id) return
+
+    setSavingAttempt(true)
+    try {
+      await fetch(`/api/study-buddy/tests/${activeTestData.id}/attempts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          score: finalScore,
+          max_score: activeTestData.questions.length,
+          selected_answers: answersLog,
+        })
+      })
+    } catch (err) {
+      console.error('Failed to save test attempt to database:', err)
+    } finally {
+      setSavingAttempt(false)
+    }
+  }
+
   // Handles clicking options in the test flow
   const handleSelectOption = (idx: number) => {
     if (selectedAnswerIdx !== null) return // already answered
@@ -373,9 +485,19 @@ export default function StudyBuddyPage() {
 
     const activeTestData = tests[activeChapterIndex]
     const currentQuestion = activeTestData?.questions[currentQuestionIdx]
+    const newAnswersLog = [...selectedAnswersLog, idx]
+    setSelectedAnswersLog(newAnswersLog)
 
+    let isCorrect = false
     if (currentQuestion && idx === currentQuestion.correctIndex) {
       setTestScore(prev => prev + 1)
+      isCorrect = true
+    }
+
+    if (currentQuestionIdx + 1 === activeTestData?.questions.length) {
+      // Last question just answered: save to DB!
+      const finalScore = testScore + (isCorrect ? 1 : 0)
+      saveTestAttempt(finalScore, newAnswersLog)
     }
   }
 
@@ -418,6 +540,15 @@ export default function StudyBuddyPage() {
     }, 150)
   }
 
+  // Interactive Fill Blank Checker
+  const handleCheckFillBlank = (qIdx: number, userGuess: string, correctAns: string) => {
+    const guess = userGuess.trim().toLowerCase()
+    const ans = correctAns.trim().toLowerCase()
+    const isOk = guess === ans
+
+    setFillBlankFeedback(prev => ({ ...prev, [qIdx]: isOk ? 'correct' : 'incorrect' }))
+  }
+
   const activeChapter = chapters.find(c => c.index === activeChapterIndex)
   const currentWorksheet = worksheets[activeChapterIndex]
   const currentTest = tests[activeChapterIndex]
@@ -454,9 +585,28 @@ export default function StudyBuddyPage() {
               <span className="text-3xl font-bold bg-gradient-to-r from-indigo-400 to-pink-500 bg-clip-text text-transparent">OCR InfyGalaxy</span>
             </Link>
           </div>
-          <span className="text-xs bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
-            Smart Classroom AI
-          </span>
+
+          {/* SaaS Connection Status Indicator */}
+          <div>
+            {dbMode === 'supabase' && (
+              <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Cloud Database Active
+              </span>
+            )}
+            {dbMode === 'memory' && (
+              <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-md" title="Suppressed/No keys found in environment variables. Falling back to sandbox memory.">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                Local Sandbox Fallback
+              </span>
+            )}
+            {dbMode === 'loading' && (
+              <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-white/5 text-gray-400">
+                <Spinner size="sm" color="gray" />
+                Detecting persistence...
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
@@ -471,73 +621,180 @@ export default function StudyBuddyPage() {
             <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-3">
               AI Study Buddy
             </h1>
-            <p className="text-gray-400 text-base">
-              Upload study guides, school worksheets, or learning PDFs. We will parse it and generate interactive chapters, worksheets, tests, and gamified study sheets.
+            <p className="text-gray-400 text-sm leading-relaxed">
+              Upload study guides or textbook notes. We partition the material into exactly 10 interactive chapters, worksheets, and custom MCQ exam sheets.
             </p>
           </div>
         )}
 
-        {/* ── STAGE 1: UPLOAD SCREEN ── */}
+        {/* ── STAGE 1: SUBJECT DASHBOARD / UPLOAD SCREEN ── */}
         {stage === 'idle' && (
-          <div className="max-w-2xl mx-auto">
+          <div className="space-y-12 animate-fade-in-up">
             {error && (
-              <div className="mb-6 p-4 bg-red-900/30 border border-red-500/30 text-red-300 rounded-2xl flex gap-3 items-start">
+              <div className="max-w-2xl mx-auto p-4 bg-red-900/30 border border-red-500/30 text-red-300 rounded-2xl flex gap-3 items-start">
                 <span className="text-xl">⚠️</span>
                 <div>
-                  <h4 className="font-bold text-sm">Processing Failed</h4>
+                  <h4 className="font-bold text-sm">Operation Failed</h4>
                   <p className="text-xs text-red-400/90 mt-0.5">{error}</p>
                 </div>
               </div>
             )}
-            
-            <Dropzone
-              onFileSelect={handleFileSelect}
-              disabled={false}
-              onError={(msg) => setError(msg)}
-            />
 
-            {file && (
-              <div className="mt-6 space-y-4 animate-fade-in-up">
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-3xl">📄</span>
-                    <div>
-                      <p className="text-sm font-semibold truncate max-w-[280px]">{file.name}</p>
-                      <p className="text-xs text-gray-400">{(file.size / 1024).toFixed(1)} KB</p>
-                    </div>
+            <div className="grid lg:grid-cols-12 gap-8 items-start">
+              {/* Left Column: Saved Subject Grid */}
+              <div className="lg:col-span-7 space-y-6">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span>📚</span> Your Saved Courses
+                </h2>
+
+                {loadingSubjects ? (
+                  <div className="flex flex-col items-center justify-center p-16 bg-white/5 border border-white/10 rounded-3xl">
+                    <Spinner size="md" color="purple" />
+                    <p className="text-gray-400 text-xs mt-3">Syncing subjects from database...</p>
                   </div>
+                ) : subjects.length === 0 ? (
+                  <div className="text-center p-16 bg-white/5 border border-white/10 rounded-3xl">
+                    <p className="text-gray-400 text-sm">No learning courses configured yet.</p>
+                    <p className="text-gray-500 text-xs mt-1">Upload a PDF or paste notes on the right to build your first course!</p>
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {subjects.map((sub) => (
+                      <button
+                        key={sub.id}
+                        onClick={() => selectSubject(sub)}
+                        className="group text-left p-6 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 hover:scale-[1.02] hover:border-indigo-500/30"
+                      >
+                        <div className="text-2xl mb-3">📘</div>
+                        <h3 className="text-white font-bold text-base truncate group-hover:text-pink-400 transition-colors">
+                          {sub.name}
+                        </h3>
+                        <p className="text-gray-400 text-xs line-clamp-2 mt-1 min-h-[32px]">
+                          {sub.description || 'No description provided.'}
+                        </p>
+                        <div className="flex justify-between items-center mt-5 pt-3 border-t border-white/10 text-[10px] font-bold text-gray-500">
+                          <span>{sub.chaptersCount || 0} CHAPTERS LOADED</span>
+                          <span className="text-indigo-400 group-hover:translate-x-1 transition-transform">Resume Course →</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Upload Wizard */}
+              <div className="lg:col-span-5 bg-gradient-to-b from-slate-900 to-slate-950 border border-white/10 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+                <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                  <span>✨</span> Compile Study Course
+                </h2>
+                <p className="text-gray-400 text-xs mb-5">Convert notes or books into structured worksheets & test papers.</p>
+
+                {/* Upload Mode Toggle */}
+                <div className="flex bg-black/40 border border-white/10 p-1 rounded-xl mb-6">
                   <button
-                    onClick={() => setFile(null)}
-                    className="text-gray-400 hover:text-white text-xs font-semibold px-3 py-1 bg-white/5 rounded-lg border border-white/10 hover:bg-white/10 transition"
+                    onClick={() => { setUploadMode('pdf'); setError(null); }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+                      uploadMode === 'pdf' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'
+                    }`}
                   >
-                    Remove
+                    📄 PDF Document
+                  </button>
+                  <button
+                    onClick={() => { setUploadMode('paste'); setError(null); }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+                      uploadMode === 'paste' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    ✍️ Paste Notes
                   </button>
                 </div>
 
-                <button
-                  onClick={handleStartProcess}
-                  className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-pink-600 hover:opacity-95 text-white font-extrabold rounded-2xl text-lg shadow-lg shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5"
-                >
-                  Generate Study Suite 🎓
-                </button>
+                {uploadMode === 'pdf' ? (
+                  <div>
+                    <Dropzone
+                      onFileSelect={handleFileSelect}
+                      disabled={false}
+                      onError={(msg) => setError(msg)}
+                    />
+
+                    {file && (
+                      <div className="mt-6 space-y-4 animate-fade-in-up">
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="text-3xl">📄</span>
+                            <div>
+                              <p className="text-sm font-semibold truncate max-w-[180px]">{file.name}</p>
+                              <p className="text-xs text-gray-400">{(file.size / 1024).toFixed(1)} KB</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setFile(null)}
+                            className="text-gray-400 hover:text-white text-xs font-semibold px-3 py-1 bg-white/5 rounded-lg border border-white/10 hover:bg-white/10 transition"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <button
+                          onClick={handleStartProcess}
+                          className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-pink-600 hover:opacity-95 text-white font-extrabold rounded-2xl text-lg shadow-lg shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5"
+                        >
+                          Generate Study Suite 🎓
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+                        Course / Subject Title
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Science Revision, History Notes..."
+                        value={subjectTitleInput}
+                        onChange={(e) => setSubjectTitleInput(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 text-white placeholder-gray-600 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+                        Syllabus Text Contents
+                      </label>
+                      <textarea
+                        rows={6}
+                        placeholder="Paste study material text here (minimum 200 characters)..."
+                        value={pastedText}
+                        onChange={(e) => setPastedText(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 text-white placeholder-gray-600 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 resize-none font-sans"
+                      />
+                    </div>
+                    <button
+                      onClick={handlePasteSubmit}
+                      className="w-full py-3 bg-gradient-to-r from-indigo-600 to-pink-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 hover:opacity-95 transition"
+                    >
+                      Compile Notes
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         )}
 
         {/* ── STAGE 2: PROCESSING SCREEN ── */}
         {(stage === 'uploading' || stage === 'parsing' || stage === 'structuring') && (
           <div className="max-w-xl mx-auto bg-slate-900/60 border border-white/10 rounded-3xl p-10 text-center relative overflow-hidden shadow-2xl glass">
-            {/* Glowing neon blur overlay */}
             <div className="absolute -top-20 -left-20 w-44 h-44 bg-indigo-500/10 rounded-full blur-3xl" />
             <div className="absolute -bottom-20 -right-20 w-44 h-44 bg-pink-500/10 rounded-full blur-3xl" />
 
             <div className="flex justify-center mb-6">
-              <Spinner size="lg" color="blue" />
+              <Spinner size="lg" color="purple" />
             </div>
 
             <h3 className="text-xl font-bold mb-2">{stageLabel}</h3>
-            <p className="text-gray-400 text-xs mb-8">Next-generation document structuring mapping details...</p>
+            <p className="text-gray-400 text-xs mb-8">AI-powered course generation mapping details...</p>
 
             <ProgressBar progress={progress} color="purple" />
 
@@ -598,34 +855,26 @@ export default function StudyBuddyPage() {
 
         {/* ── STAGE: ERROR SCREEN ── */}
         {stage === 'error' && (
-          <div className="max-w-xl mx-auto bg-slate-900/60 border border-red-500/20 rounded-3xl p-10 text-center relative overflow-hidden shadow-2xl glass animate-fade-in">
-            <div className="flex justify-center mb-6">
-              <div className="w-16 h-16 flex items-center justify-center bg-red-500/10 border border-red-500/30 rounded-2xl text-3xl text-red-500 shadow-lg shadow-red-500/10">
-                ⚠️
-              </div>
-            </div>
-            <h3 className="text-xl font-bold text-white mb-2">Generation Failed</h3>
-            <p className="text-red-400 text-xs mb-8 bg-red-500/10 border border-red-500/20 p-4 rounded-xl leading-relaxed">
-              {error || 'An unexpected error occurred during processing.'}
+          <div className="max-w-md mx-auto bg-slate-900 border border-white/10 rounded-3xl p-8 text-center shadow-xl">
+            <span className="text-5xl block mb-4">⚠️</span>
+            <h3 className="text-lg font-bold text-white mb-2">Processing Error</h3>
+            <p className="text-gray-400 text-xs mb-6 leading-relaxed">
+              {error || 'An unexpected server error occurred during text generation.'}
             </p>
-            <div className="flex gap-4 justify-center">
+            <div className="flex gap-3">
               <button
-                onClick={() => {
-                  setStage('idle')
-                  setFile(null)
-                  setError(null)
-                }}
-                className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-pink-600 hover:opacity-95 text-white font-extrabold rounded-xl text-sm transition"
+                onClick={() => setStage('idle')}
+                className="flex-1 py-3 bg-gradient-to-tr from-indigo-500 to-pink-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-indigo-500/15"
               >
-                Choose Another File
+                Go Back Home
               </button>
             </div>
           </div>
         )}
 
-        {/* ── STAGE 3: WORKSPACE (SPLIT PANEL) ── */}
+        {/* ── STAGE: WORKSPACE ── */}
         {stage === 'workspace' && chapters.length > 0 && (
-          <div className="grid lg:grid-cols-12 gap-8 animate-fade-in-up">
+          <div className="grid lg:grid-cols-12 gap-8 items-start animate-fade-in-up">
             
             {/* Sidebar: 10 Chapters selector */}
             <div className="lg:col-span-3 space-y-4">
@@ -663,14 +912,17 @@ export default function StudyBuddyPage() {
 
               {/* Extra Document Details Card */}
               <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-xs space-y-2 text-gray-400">
-                <p className="font-bold text-white mb-1">Material Source</p>
-                <p className="truncate text-gray-300">📄 {file?.name}</p>
-                <p>📏 {(extractedText.length / 1000).toFixed(1)}k characters extracted</p>
+                <p className="font-bold text-white mb-1">Course Summary</p>
+                <p className="truncate text-gray-300 font-bold">📄 {selectedSubject?.name || 'Manual notes'}</p>
                 <button
-                  onClick={() => setStage('idle')}
+                  onClick={() => {
+                    setSelectedSubject(null)
+                    setChapters([])
+                    setStage('idle')
+                  }}
                   className="w-full mt-2 py-2 border border-white/10 hover:border-white/20 hover:bg-white/5 font-semibold text-white rounded-xl transition"
                 >
-                  Upload New Lesson
+                  Change Course / Upload
                 </button>
               </div>
             </div>
@@ -736,8 +988,8 @@ export default function StudyBuddyPage() {
                 {activeTab === 'worksheet' && (
                   <div className="space-y-6 animate-fade-in">
                     {loadingWorksheet && (
-                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                        <Spinner size="md" color="blue" />
+                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 animate-fade-in">
+                        <Spinner size="md" color="purple" />
                         <p className="text-xs text-gray-400 mt-4">Generating worksheet contents with AI…</p>
                       </div>
                     )}
@@ -752,43 +1004,54 @@ export default function StudyBuddyPage() {
                           </p>
                         </div>
 
-                        {/* Key Terms */}
-                        {currentWorksheet.keyTerms?.length > 0 && (
-                          <div className="space-y-3">
-                            <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Key Vocabulary</h4>
-                            <div className="grid gap-2.5">
-                              {currentWorksheet.keyTerms.map((item, idx) => (
-                                <div key={idx} className="bg-white/5 border border-white/5 p-3 rounded-xl hover:bg-white/10 transition-colors">
-                                  <span className="font-bold text-xs text-pink-400 block">{item.term}</span>
-                                  <span className="text-[11px] text-gray-400 mt-0.5 block">{item.definition}</span>
+                        {/* Vocabulary key terms */}
+                        {currentWorksheet.keyTerms && currentWorksheet.keyTerms.length > 0 && (
+                          <div className="space-y-2.5">
+                            <h4 className="text-xs font-bold text-pink-400 uppercase tracking-wider">Key Vocabulary</h4>
+                            <div className="space-y-2">
+                              {currentWorksheet.keyTerms.map((kt, kIdx) => (
+                                <div key={kIdx} className="bg-white/5 border border-white/5 hover:border-white/10 p-3.5 rounded-xl transition duration-150">
+                                  <div className="font-bold text-white text-xs text-rose-300">{kt.term}</div>
+                                  <div className="text-gray-400 text-xs leading-relaxed mt-1">{kt.definition}</div>
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
 
-                        {/* Fill in the Blanks */}
-                        {currentWorksheet.fillInBlanks?.length > 0 && (
+                        {/* Fill in the blanks */}
+                        {currentWorksheet.fillInBlanks && currentWorksheet.fillInBlanks.length > 0 && (
                           <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                              <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Fill In The Blanks</h4>
-                              <button
-                                onClick={() => setRevealWorksheetAnswers(!revealWorksheetAnswers)}
-                                className="text-[10px] font-bold text-pink-400 hover:text-pink-300 transition"
-                              >
-                                {revealWorksheetAnswers ? 'Hide Answers' : 'Reveal Answers'}
-                              </button>
-                            </div>
-
-                            <div className="space-y-2.5">
-                              {currentWorksheet.fillInBlanks.map((item, idx) => (
-                                <div key={idx} className="bg-white/5 border border-white/5 p-3 rounded-xl text-xs text-gray-300 leading-relaxed">
-                                  <span>{idx + 1}. {item.sentence}</span>
-                                  {revealWorksheetAnswers && (
-                                    <div className="mt-2 text-[10px] font-bold text-green-400 flex items-center gap-1.5 animate-fade-in">
-                                      <span>✓ Answer:</span>
-                                      <span className="bg-green-500/20 px-2 py-0.5 border border-green-500/30 rounded font-mono">{item.answer}</span>
-                                    </div>
+                            <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Fill in the Blanks</h4>
+                            <div className="space-y-3.5">
+                              {currentWorksheet.fillInBlanks.map((fib, fIdx) => (
+                                <div key={fIdx} className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-2">
+                                  <p className="text-xs text-gray-300 leading-relaxed font-medium">{fib.sentence}</p>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={fillBlankGuesses[`${activeChapterIndex}-${fIdx}`] || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value
+                                        setFillBlankGuesses(prev => ({ ...prev, [`${activeChapterIndex}-${fIdx}`]: val }))
+                                      }}
+                                      placeholder="Type missing term..."
+                                      className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 flex-1"
+                                    />
+                                    <button
+                                      onClick={() => handleCheckFillBlank(fIdx, fillBlankGuesses[`${activeChapterIndex}-${fIdx}`] || '', fib.answer)}
+                                      className="px-3 py-1 bg-white/10 hover:bg-white/15 text-[10px] font-bold rounded-lg transition"
+                                    >
+                                      Check
+                                    </button>
+                                  </div>
+                                  {fillBlankFeedback[`${fIdx}`] === 'correct' && (
+                                    <p className="text-emerald-400 text-[10px] font-bold">✓ Correct! Spot on.</p>
+                                  )}
+                                  {fillBlankFeedback[`${fIdx}`] === 'incorrect' && (
+                                    <p className="text-rose-400 text-[10px] font-bold">
+                                      ✗ Incorrect. Answer: <span className="underline font-extrabold">{fib.answer}</span>
+                                    </p>
                                   )}
                                 </div>
                               ))}
@@ -796,24 +1059,26 @@ export default function StudyBuddyPage() {
                           </div>
                         )}
 
-                        {/* Discussion Questions */}
-                        {currentWorksheet.discussionQuestions?.length > 0 && (
+                        {/* Discussion prompts */}
+                        {currentWorksheet.discussionQuestions && currentWorksheet.discussionQuestions.length > 0 && (
                           <div className="space-y-3">
-                            <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Discussion Prompts</h4>
-                            <div className="space-y-2.5">
-                              {currentWorksheet.discussionQuestions.map((item, idx) => (
-                                <div key={idx} className="bg-white/5 border border-white/5 rounded-xl overflow-hidden">
+                            <h4 className="text-xs font-bold text-pink-400 uppercase tracking-wider">Discussion Prompts</h4>
+                            <div className="space-y-2">
+                              {currentWorksheet.discussionQuestions.map((dq, dIdx) => (
+                                <div key={dIdx} className="bg-white/5 border border-white/5 rounded-xl overflow-hidden">
                                   <button
-                                    onClick={() => setExpandedDiscussionQ(prev => ({ ...prev, [idx]: !prev[idx] }))}
-                                    className="w-full text-left p-3 text-xs font-semibold flex justify-between items-center hover:bg-white/5 transition"
+                                    onClick={() => setExpandedDiscussionQ(prev => ({ ...prev, [dIdx]: !prev[dIdx] }))}
+                                    className="w-full text-left p-3.5 text-xs font-bold text-white hover:bg-white/5 flex justify-between items-center transition"
                                   >
-                                    <span className="pr-4">{item.question}</span>
-                                    <span className="text-gray-500 font-bold">{expandedDiscussionQ[idx] ? '−' : '+'}</span>
+                                    <span>{dq.question}</span>
+                                    <span className="text-gray-500 font-mono text-[10px]">
+                                      {expandedDiscussionQ[dIdx] ? '▲' : '▼'}
+                                    </span>
                                   </button>
-                                  {expandedDiscussionQ[idx] && (
-                                    <div className="px-3 pb-3 pt-1 border-t border-white/5 bg-white/[0.01] text-[11px] text-gray-400 leading-relaxed animate-fade-in-up">
-                                      <p className="font-semibold text-gray-300 mb-1">Sample Answer:</p>
-                                      {item.sampleAnswer}
+                                  {expandedDiscussionQ[dIdx] && (
+                                    <div className="p-4 bg-black/15 text-xs text-gray-400 border-t border-white/5 leading-relaxed animate-fade-in">
+                                      <strong className="text-gray-300 block text-[9px] uppercase font-bold tracking-wider mb-1">Suggested Model Answer:</strong>
+                                      {dq.sampleAnswer}
                                     </div>
                                   )}
                                 </div>
@@ -824,7 +1089,7 @@ export default function StudyBuddyPage() {
                       </>
                     ) : (
                       <div className="py-20 text-center text-gray-500 text-xs">
-                        Worksheet will load in a moment.
+                        Worksheet items will load in a moment.
                       </div>
                     )}
                   </div>
@@ -834,8 +1099,8 @@ export default function StudyBuddyPage() {
                 {activeTab === 'test' && (
                   <div className="space-y-6 animate-fade-in">
                     {loadingTest && (
-                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                        <Spinner size="md" color="blue" />
+                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 animate-fade-in">
+                        <Spinner size="md" color="purple" />
                         <p className="text-xs text-gray-400 mt-4">Creating test questions with AI…</p>
                       </div>
                     )}
@@ -857,6 +1122,7 @@ export default function StudyBuddyPage() {
                                 setCurrentQuestionIdx(0)
                                 setSelectedAnswerIdx(null)
                                 setTestScore(0)
+                                setSelectedAnswersLog([])
                               }}
                               className="px-6 py-2.5 bg-gradient-to-tr from-indigo-500 to-pink-500 hover:opacity-90 font-bold text-xs rounded-xl shadow-lg shadow-indigo-500/10"
                             >
@@ -958,6 +1224,10 @@ export default function StudyBuddyPage() {
                                 : 'Keep practicing. Read the chapter carefully and try again! 📖'}
                             </p>
 
+                            {savingAttempt && (
+                              <p className="text-[10px] text-gray-500 animate-pulse">Saving score attempt to database...</p>
+                            )}
+
                             <div className="flex gap-3 pt-4 max-w-xs mx-auto">
                               <button
                                 onClick={() => {
@@ -966,6 +1236,7 @@ export default function StudyBuddyPage() {
                                   setCurrentQuestionIdx(0)
                                   setSelectedAnswerIdx(null)
                                   setTestScore(0)
+                                  setSelectedAnswersLog([])
                                 }}
                                 className="flex-1 py-3 bg-gradient-to-tr from-indigo-500 to-pink-500 hover:opacity-90 font-bold text-xs rounded-xl transition"
                               >
@@ -996,8 +1267,8 @@ export default function StudyBuddyPage() {
                 {activeTab === 'quiz' && (
                   <div className="space-y-6 animate-fade-in">
                     {loadingWorksheet && (
-                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                        <Spinner size="md" color="blue" />
+                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 animate-fade-in">
+                        <Spinner size="md" color="purple" />
                         <p className="text-xs text-gray-400 mt-4">Loading quiz flashcards…</p>
                       </div>
                     )}
