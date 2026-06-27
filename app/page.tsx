@@ -47,11 +47,11 @@ const TOOLS = [
   {
     id: 'remove-watermark',
     icon: '✨',
-    title: 'Remove Watermark',
-    description: 'Remove text or background image watermarks from PDF and PPTX files instantly.',
+    title: 'Watermark Tool',
+    description: 'Add custom text watermarks or strip text and background image watermarks from PDF/PPTX instantly.',
     href: '/tools/remove-watermark',
     gradient: 'from-rose-500 to-pink-500',
-    badge: 'New',
+    badge: 'Updated',
     badgeColor: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
   },
   {

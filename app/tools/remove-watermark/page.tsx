@@ -1,4 +1,4 @@
-'use client' // Test write access
+'use client'
 
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
@@ -8,6 +8,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { downloadBlob } from '@/lib/services/converterService'
 
 type Stage = 'idle' | 'file_selected' | 'processing' | 'done' | 'error'
+type ToolMode = 'remove' | 'create'
 
 interface ProcessProgress {
   percent: number
@@ -15,6 +16,7 @@ interface ProcessProgress {
 }
 
 export default function RemoveWatermarkPage() {
+  const [activeTool, setActiveTool] = useState<ToolMode>('remove')
   const [files, setFiles] = useState<File[]>([])
   const [stage, setStage] = useState<Stage>('idle')
   const [progress, setProgress] = useState<ProcessProgress>({ percent: 0, label: '' })
@@ -22,11 +24,18 @@ export default function RemoveWatermarkPage() {
   const [fileError, setFileError] = useState<string | null>(null)
   const [cleanedFiles, setCleanedFiles] = useState<{ name: string; blob: Blob }[]>([])
 
-  // Options
+  // Remove Settings Options
   const [watermarkText, setWatermarkText] = useState('CONFIDENTIAL')
   const [removeImages, setRemoveImages] = useState(true)
   const [smartClean, setSmartClean] = useState(true)
   const [mergePdfs, setMergePdfs] = useState(false)
+
+  // Create Settings Options
+  const [createWatermarkText, setCreateWatermarkText] = useState('CONFIDENTIAL')
+  const [createFontSize, setCreateFontSize] = useState(48)
+  const [createColor, setCreateColor] = useState<'gray' | 'red' | 'blue' | 'green'>('gray')
+  const [createOpacity, setCreateOpacity] = useState(0.2)
+  const [createAngle, setCreateAngle] = useState(-45)
 
   const allPdfs = files.length > 0 && files.every((f) => f.name.toLowerCase().endsWith('.pdf'))
   const isMergingActive = allPdfs && mergePdfs
@@ -96,7 +105,6 @@ export default function RemoveWatermarkPage() {
     const zip = await JSZip.loadAsync(fileBytes)
     const lowercaseSearch = searchStr.toLowerCase()
 
-    // Find slides, layouts, and masters
     const filesToProcess: string[] = []
     zip.forEach((path: string) => {
       if (
@@ -121,7 +129,6 @@ export default function RemoveWatermarkPage() {
       const parser = new DOMParser()
       const xmlDoc = parser.parseFromString(xmlContent, 'application/xml')
 
-      // Remove shapes containing text
       const shapes = xmlDoc.getElementsByTagName('p:sp')
       const shapesToRemove: Element[] = []
 
@@ -136,7 +143,6 @@ export default function RemoveWatermarkPage() {
         if (textVal.toLowerCase().includes(lowercaseSearch)) {
           shapesToRemove.push(shape)
         } else {
-          // Check if named watermark/confidential
           const nvSpPr = shape.getElementsByTagName('p:nvSpPr')[0]
           const nameAttr = nvSpPr?.getElementsByTagName('p:cNvPr')[0]?.getAttribute('name') || ''
           if (
@@ -148,7 +154,6 @@ export default function RemoveWatermarkPage() {
         }
       }
 
-      // Process image shapes
       if (removeImages) {
         const pictures = xmlDoc.getElementsByTagName('p:pic')
         const picsToRemove: Element[] = []
@@ -187,7 +192,6 @@ export default function RemoveWatermarkPage() {
     const lowercaseSearch = searchStr.toLowerCase()
     const totalPages = pages.length
 
-    // Helper to decompress a stream using pako
     const decompressStream = (stream: any) => {
       const bytes = stream.getContents()
       const filter = stream.dict.get(PDFName.of('Filter'))
@@ -202,7 +206,6 @@ export default function RemoveWatermarkPage() {
       return { decompressed: bytes, isCompressed: false }
     }
 
-    // Helper to compress bytes back using pako
     const compressBytes = (bytes: Uint8Array) => {
       return pako.deflate(bytes)
     }
@@ -213,15 +216,13 @@ export default function RemoveWatermarkPage() {
       
       if (rawText.toLowerCase().includes(lowercaseSearch)) {
         let cleanedText = rawText
-        
-        // Replace occurrences inside text display operators: (TEXT) Tj or (TEXT) TJ
         const escaped = searchStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const regex = new RegExp(`\\([^)]*${escaped}[^)]*\\)`, 'gi')
         cleanedText = cleanedText.replace(regex, '()')
         
         if (smartClean) {
           cleanedText = cleanedText
-            .replace(/\/GS\d+\s+gs/g, '') // strip transparency state operators
+            .replace(/\/GS\d+\s+gs/g, '')
             .replace(/\/Gs\d+\s+gs/g, '')
         }
         
@@ -237,7 +238,6 @@ export default function RemoveWatermarkPage() {
       return false
     }
 
-    // Recursive XObject cleaner
     const processedRefs = new Set<string>()
     const cleanXObjects = (xObjectsDict: any, depth = 0) => {
       if (!(xObjectsDict instanceof PDFDict)) return
@@ -266,8 +266,6 @@ export default function RemoveWatermarkPage() {
           const subtypeStr = subtype ? subtype.toString() : ''
           
           if (subtypeStr === '/Form') {
-            // Heuristic for vector watermark:
-            // Has a transparency group (/Group) and size is large (> 1000 bytes)
             const hasGroup = dictObj.get(PDFName.of('Group')) !== undefined
             const streamSize = typeof xObject.getContents === 'function' ? xObject.getContents().length : 0
             
@@ -275,12 +273,10 @@ export default function RemoveWatermarkPage() {
               xObject.contents = new Uint8Array([])
               xObject.updateDict()
             } else {
-              // Otherwise check for text watermark in the Form XObject stream
               if (xObject instanceof PDFStream || xObject instanceof PDFRawStream) {
                 cleanStreamText(xObject)
               }
               
-              // Recurse into resources
               const resourcesRef = dictObj.get(PDFName.of('Resources'))
               if (resourcesRef) {
                 const resources = pdfDoc.context.lookup(resourcesRef)
@@ -294,7 +290,6 @@ export default function RemoveWatermarkPage() {
               }
             }
           } else if (subtypeStr === '/Image' && removeImages) {
-            // Clean large image watermarks
             const widthObj = dictObj.get(PDFName.of('Width'))
             const heightObj = dictObj.get(PDFName.of('Height'))
             
@@ -329,7 +324,6 @@ export default function RemoveWatermarkPage() {
         label: `Scanning page ${i + 1} of ${totalPages} (${percent}%)…`
       })
 
-      // 1. Clean Page Contents (Text Watermarks)
       const contentsRef = page.node.Contents()
       if (contentsRef) {
         const contents = pdfDoc.context.lookup(contentsRef)
@@ -349,7 +343,6 @@ export default function RemoveWatermarkPage() {
         })
       }
 
-      // 2. Clean Page XObjects recursively (Vector and Image Watermarks)
       const resourcesRef = (page.node as any).Resources()
       if (resourcesRef) {
         const resources = pdfDoc.context.lookup(resourcesRef)
@@ -364,6 +357,72 @@ export default function RemoveWatermarkPage() {
     }
 
     onProgress?.({ percent: 90, label: 'Compiling PDF document layout…' })
+    const outputBytes = await pdfDoc.save()
+    return new Blob([outputBytes as any], { type: 'application/pdf' })
+  }
+
+  // PDF Watermark Creation
+  const addWatermarkToPdf = async (
+    fileBytes: ArrayBuffer,
+    text: string,
+    options: {
+      fontSize: number
+      color: 'gray' | 'red' | 'blue' | 'green'
+      opacity: number
+      angle: number
+    },
+    onProgress?: (p: ProcessProgress) => void
+  ): Promise<Blob> => {
+    const { PDFDocument, rgb, degrees, StandardFonts } = await import('pdf-lib')
+    
+    onProgress?.({ percent: 10, label: 'Loading PDF document…' })
+    const pdfDoc = await PDFDocument.load(fileBytes)
+    const pages = pdfDoc.getPages()
+    const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+    
+    const { fontSize, color, opacity, angle } = options
+    
+    // Set RGB values based on color selection
+    const r = color === 'red' ? 0.9 : color === 'blue' ? 0.1 : color === 'green' ? 0.1 : 0.5
+    const g = color === 'red' ? 0.1 : color === 'blue' ? 0.1 : color === 'green' ? 0.7 : 0.5
+    const b = color === 'red' ? 0.1 : color === 'blue' ? 0.9 : color === 'green' ? 0.1 : 0.5
+    
+    const textWidth = font.widthOfTextAtSize(text, fontSize)
+    const textHeight = font.heightAtSize(fontSize)
+    const totalPages = pages.length
+    
+    for (let i = 0; i < totalPages; i++) {
+      const page = pages[i]
+      const percent = Math.round(10 + ((i + 1) / totalPages) * 70)
+      onProgress?.({
+        percent,
+        label: `Applying watermark to page ${i + 1} of ${totalPages} (${percent}%)…`
+      })
+      
+      const { width, height } = page.getSize()
+      
+      // Rotational translation centering
+      const rad = (angle * Math.PI) / 180
+      const cos = Math.cos(rad)
+      const sin = Math.sin(rad)
+      const cx = width / 2
+      const cy = height / 2
+      
+      const x = cx - (textWidth / 2) * cos + (textHeight / 2) * sin
+      const y = cy - (textWidth / 2) * sin - (textHeight / 2) * cos
+      
+      page.drawText(text, {
+        x,
+        y,
+        size: fontSize,
+        font,
+        color: rgb(r, g, b),
+        opacity,
+        rotate: degrees(angle),
+      })
+    }
+    
+    onProgress?.({ percent: 90, label: 'Finalizing PDF document compile…' })
     const outputBytes = await pdfDoc.save()
     return new Blob([outputBytes as any], { type: 'application/pdf' })
   }
@@ -388,7 +447,7 @@ export default function RemoveWatermarkPage() {
     if (files.length === 0) return
     setError(null)
     setStage('processing')
-    setProgress({ percent: 0, label: 'Initializing file clean stream…' })
+    setProgress({ percent: 0, label: 'Initializing file stream…' })
 
     const totalFiles = files.length
     const results: { name: string; blob: Blob }[] = []
@@ -410,21 +469,31 @@ export default function RemoveWatermarkPage() {
         const bytes = await activeFile.arrayBuffer()
         let resultBlob: Blob
 
-        if (activeFile.name.endsWith('.pptx')) {
-          resultBlob = await cleanPptx(bytes, watermarkText, fileOnProgress)
+        if (activeTool === 'remove') {
+          if (activeFile.name.endsWith('.pptx')) {
+            resultBlob = await cleanPptx(bytes, watermarkText, fileOnProgress)
+          } else {
+            resultBlob = await cleanPdf(bytes, watermarkText, fileOnProgress)
+          }
         } else {
-          resultBlob = await cleanPdf(bytes, watermarkText, fileOnProgress)
+          // Create Watermark mode
+          resultBlob = await addWatermarkToPdf(bytes, createWatermarkText, {
+            fontSize: createFontSize,
+            color: createColor,
+            opacity: createOpacity,
+            angle: createAngle
+          }, fileOnProgress)
         }
 
         results.push({ name: activeFile.name, blob: resultBlob })
       }
 
-      setProgress({ percent: 100, label: 'All files successfully cleaned!' })
+      setProgress({ percent: 100, label: 'All files successfully processed!' })
       setCleanedFiles(results)
       setStage('done')
     } catch (err: any) {
-      console.error('Watermark removal error:', err)
-      setError(err.message || 'Watermark removal failed. Make sure the file format is valid.')
+      console.error('Watermark processing error:', err)
+      setError(err.message || 'Watermark operation failed. Make sure the file format is valid.')
       setStage('error')
     }
   }
@@ -436,12 +505,12 @@ export default function RemoveWatermarkPage() {
       const fileResult = cleanedFiles[0]
       const prefix = fileResult.name.replace(/\.[^/.]+$/, '')
       const ext = fileResult.name.endsWith('.pptx') ? 'pptx' : 'pdf'
-      downloadBlob(fileResult.blob, `${prefix}_cleaned.${ext}`)
+      downloadBlob(fileResult.blob, `${prefix}_watermarked.${ext}`)
     } else if (isMergingActive) {
       try {
         setProgress({ percent: 95, label: 'Merging PDF documents…' })
         const mergedBlob = await mergePdfBlobs(cleanedFiles)
-        downloadBlob(mergedBlob, 'watermarks_removed_merged.pdf')
+        downloadBlob(mergedBlob, 'watermarked_merged.pdf')
         setProgress({ percent: 100, label: 'Merged PDF downloaded successfully!' })
       } catch (err: any) {
         console.error('PDF merge error:', err)
@@ -456,11 +525,11 @@ export default function RemoveWatermarkPage() {
         cleanedFiles.forEach((fileResult) => {
           const prefix = fileResult.name.replace(/\.[^/.]+$/, '')
           const ext = fileResult.name.endsWith('.pptx') ? 'pptx' : 'pdf'
-          zip.file(`${prefix}_cleaned.${ext}`, fileResult.blob)
+          zip.file(`${prefix}_watermarked.${ext}`, fileResult.blob)
         })
 
         const zipBlob = await zip.generateAsync({ type: 'blob' })
-        downloadBlob(zipBlob, 'watermarks_removed.zip')
+        downloadBlob(zipBlob, 'watermarked_files.zip')
       } catch (err: any) {
         console.error('ZIP generation error:', err)
         setError('Failed to generate ZIP archive.')
@@ -487,15 +556,52 @@ export default function RemoveWatermarkPage() {
       </header>
 
       <div className="max-w-6xl mx-auto px-4 py-12">
+        
+        {/* Tool Selector Tabs */}
+        <div className="flex justify-center max-w-sm mx-auto bg-black/40 border border-white/10 p-1 rounded-xl mb-8">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTool('remove')
+              handleReset()
+            }}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+              activeTool === 'remove'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            🧹 Remove Watermark
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTool('create')
+              handleReset()
+            }}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+              activeTool === 'create'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            ✍️ Create Watermark
+          </button>
+        </div>
+
         {/* Title */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-3xl mb-4">
-            ✨
+            {activeTool === 'remove' ? '🧹' : '✍️'}
           </div>
           <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-rose-400 to-pink-400 bg-clip-text text-transparent mb-3">
-            Remove Watermark
+            {activeTool === 'remove' ? 'Remove Watermark' : 'Create Watermark'}
           </h1>
-          <p className="text-gray-400 text-lg">Strip text or background image watermarks from PDF and PPTX files</p>
+          <p className="text-gray-400 text-lg">
+            {activeTool === 'remove'
+              ? 'Strip text or background image watermarks from PDF and PPTX files'
+              : 'Add customized diagonal text watermarks to your PDF pages'}
+          </p>
         </div>
 
         {stage === 'done' && cleanedFiles.length > 0 ? (
@@ -504,9 +610,11 @@ export default function RemoveWatermarkPage() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-green-500/10 border border-green-500/20 text-3xl mb-6">
               🎉
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Watermark Stripped!</h2>
+            <h2 className="text-2xl font-bold text-white mb-2">
+              {activeTool === 'remove' ? 'Watermark Stripped!' : 'Watermark Injected!'}
+            </h2>
             <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-              Your documents have been cleaned. The watermark layers have been filtered out client-side with full data privacy.
+              Your documents have been processed successfully client-side with full data privacy.
             </p>
 
             <div className="space-y-4">
@@ -516,8 +624,8 @@ export default function RemoveWatermarkPage() {
               >
                 <span>💾</span> {
                   cleanedFiles.length > 1 
-                    ? (isMergingActive ? 'Download Merged PDF' : 'Download Cleaned Files (ZIP)') 
-                    : 'Download Cleaned File'
+                    ? (isMergingActive ? 'Download Merged PDF' : 'Download Files (ZIP)') 
+                    : 'Download Processed File'
                 }
               </button>
 
@@ -525,86 +633,214 @@ export default function RemoveWatermarkPage() {
                 onClick={handleReset}
                 className="w-full py-3 bg-white/5 hover:bg-white/10 text-white border border-white/10 font-semibold rounded-xl transition text-sm"
               >
-                Clean Another File
+                Process Another File
               </button>
             </div>
           </div>
         ) : (
-          /* Upload / Settings State */
-          <div className="grid lg:grid-cols-3 gap-8">
+          /* Settings / Upload Columns */
+          <div className="grid lg:grid-cols-3 gap-8 animate-fade-in">
             
-            {/* Left Options Card */}
+            {/* Left Column: Settings Panel */}
             <div className="bg-white/5 border border-white/10 rounded-2xl p-5 shadow-lg h-fit space-y-6">
               <h3 className="text-white font-semibold flex items-center gap-2">
-                <span>⚙️</span> Cleanup Settings
+                <span>⚙️</span> {activeTool === 'remove' ? 'Cleanup Settings' : 'Watermark Design'}
               </h3>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                    Watermark Text to Erase
-                  </label>
-                  <input
-                    type="text"
-                    value={watermarkText}
-                    onChange={(e) => setWatermarkText(e.target.value)}
-                    placeholder="e.g. CONFIDENTIAL"
-                    className="w-full bg-black/40 border border-white/10 text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-rose-500 transition"
-                  />
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {['CONFIDENTIAL', 'DRAFT', 'SAMPLE', 'COPY'].map((w) => (
-                      <button
-                        key={w}
-                        type="button"
-                        onClick={() => setWatermarkText(w)}
-                        className={`text-[9px] font-bold px-2 py-1 rounded border transition ${
-                          watermarkText === w 
-                            ? 'bg-rose-500/20 border-rose-500/40 text-rose-300' 
-                            : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        {w}
-                      </button>
-                    ))}
+              {activeTool === 'remove' ? (
+                /* Options: REMOVE MODE */
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                      Watermark Text to Erase
+                    </label>
+                    <input
+                      type="text"
+                      value={watermarkText}
+                      onChange={(e) => setWatermarkText(e.target.value)}
+                      placeholder="e.g. CONFIDENTIAL"
+                      className="w-full bg-black/40 border border-white/10 text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-rose-500 transition"
+                    />
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {['CONFIDENTIAL', 'DRAFT', 'SAMPLE', 'COPY'].map((w) => (
+                        <button
+                          key={w}
+                          type="button"
+                          onClick={() => setWatermarkText(w)}
+                          className={`text-[9px] font-bold px-2 py-1 rounded border transition ${
+                            watermarkText === w 
+                              ? 'bg-rose-500/20 border-rose-500/40 text-rose-300' 
+                              : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          {w}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-white/10" />
+
+                  <div className="space-y-3 pt-2">
+                    <label className="flex items-start gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={removeImages}
+                        onChange={(e) => setRemoveImages(e.target.checked)}
+                        className="mt-0.5 rounded border-white/10 text-rose-600 focus:ring-0 focus:ring-offset-0 bg-transparent"
+                      />
+                      <div>
+                        <span className="text-xs font-semibold text-white group-hover:text-rose-300 transition">
+                          Remove Background Images
+                        </span>
+                        <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+                          Identify and erase large background image overlays.
+                        </p>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={smartClean}
+                        onChange={(e) => setSmartClean(e.target.checked)}
+                        className="mt-0.5 rounded border-white/10 text-rose-600 focus:ring-0 focus:ring-offset-0 bg-transparent"
+                      />
+                      <div>
+                        <span className="text-xs font-semibold text-white group-hover:text-rose-300 transition">
+                          Smart Opacity Cleanup
+                        </span>
+                        <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+                          Strip transparent graphics operators linked to watermarks.
+                        </p>
+                      </div>
+                    </label>
+
+                    {allPdfs && (
+                      <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
+                        <input
+                          type="checkbox"
+                          checked={mergePdfs}
+                          onChange={(e) => setMergePdfs(e.target.checked)}
+                          className="mt-0.5 rounded border-white/10 text-rose-600 focus:ring-0 focus:ring-offset-0 bg-transparent"
+                        />
+                        <div>
+                          <span className="text-xs font-semibold text-white group-hover:text-rose-300 transition">
+                            Merge PDFs into One File
+                          </span>
+                          <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+                            Combine all clean PDF documents into a single merged PDF file.
+                          </p>
+                        </div>
+                      </label>
+                    )}
                   </div>
                 </div>
-
-                <div className="h-px bg-white/10" />
-
-                <div className="space-y-3 pt-2">
-                  <label className="flex items-start gap-3 cursor-pointer group">
+              ) : (
+                /* Options: CREATE MODE */
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                      Watermark Stamp Text
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={removeImages}
-                      onChange={(e) => setRemoveImages(e.target.checked)}
-                      className="mt-0.5 rounded border-white/10 text-rose-600 focus:ring-0 focus:ring-offset-0 bg-transparent"
+                      type="text"
+                      value={createWatermarkText}
+                      onChange={(e) => setCreateWatermarkText(e.target.value)}
+                      placeholder="e.g. COPY, CONFIDENTIAL"
+                      className="w-full bg-black/40 border border-white/10 text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-rose-500 transition"
                     />
-                    <div>
-                      <span className="text-xs font-semibold text-white group-hover:text-rose-300 transition">
-                        Remove Background Images
-                      </span>
-                      <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
-                        Identify and erase large background image overlays.
-                      </p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {['CONFIDENTIAL', 'COPY', 'DRAFT', 'DO NOT COPY', 'ORIGINAL'].map((w) => (
+                        <button
+                          key={w}
+                          type="button"
+                          onClick={() => setCreateWatermarkText(w)}
+                          className={`text-[9px] font-bold px-2 py-1 rounded border transition ${
+                            createWatermarkText === w 
+                              ? 'bg-rose-500/20 border-rose-500/40 text-rose-300' 
+                              : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          {w}
+                        </button>
+                      ))}
                     </div>
-                  </label>
+                  </div>
 
-                  <label className="flex items-start gap-3 cursor-pointer group">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex justify-between">
+                      <span>Font Size</span>
+                      <span className="text-rose-400 font-bold font-mono">{createFontSize}pt</span>
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={smartClean}
-                      onChange={(e) => setSmartClean(e.target.checked)}
-                      className="mt-0.5 rounded border-white/10 text-rose-600 focus:ring-0 focus:ring-offset-0 bg-transparent"
+                      type="range"
+                      min="18"
+                      max="96"
+                      value={createFontSize}
+                      onChange={(e) => setCreateFontSize(Number(e.target.value))}
+                      className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-rose-500"
                     />
-                    <div>
-                      <span className="text-xs font-semibold text-white group-hover:text-rose-300 transition">
-                        Smart Opacity Cleanup
-                      </span>
-                      <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
-                        Strip transparent graphics operators linked to watermarks.
-                      </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                      Color Selection
+                    </label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { id: 'gray' as const, label: 'Gray', bg: 'bg-gray-400' },
+                        { id: 'red' as const, label: 'Red', bg: 'bg-red-500' },
+                        { id: 'blue' as const, label: 'Blue', bg: 'bg-blue-500' },
+                        { id: 'green' as const, label: 'Green', bg: 'bg-green-500' },
+                      ].map((col) => (
+                        <button
+                          key={col.id}
+                          type="button"
+                          onClick={() => setCreateColor(col.id)}
+                          className={`py-2 rounded-xl text-[10px] font-bold flex flex-col items-center gap-1.5 border transition ${
+                            createColor === col.id
+                              ? 'border-rose-500 bg-rose-500/10 text-rose-300'
+                              : 'border-white/10 bg-white/5 text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          <span className={`w-3.5 h-3.5 rounded-full ${col.bg} border border-white/20`} />
+                          <span>{col.label}</span>
+                        </button>
+                      ))}
                     </div>
-                  </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex justify-between">
+                      <span>Opacity / Transparency</span>
+                      <span className="text-rose-400 font-bold font-mono">{Math.round(createOpacity * 100)}%</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="0.05"
+                      max="0.8"
+                      step="0.05"
+                      value={createOpacity}
+                      onChange={(e) => setCreateOpacity(Number(e.target.value))}
+                      className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex justify-between">
+                      <span>Angle of Rotation</span>
+                      <span className="text-rose-400 font-bold font-mono">{createAngle}°</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="-90"
+                      max="90"
+                      value={createAngle}
+                      onChange={(e) => setCreateAngle(Number(e.target.value))}
+                      className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                    />
+                  </div>
 
                   {allPdfs && (
                     <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
@@ -619,23 +855,23 @@ export default function RemoveWatermarkPage() {
                           Merge PDFs into One File
                         </span>
                         <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
-                          Combine all clean PDF documents into a single merged PDF file.
+                          Combine all watermarked PDFs into a single merged file.
                         </p>
                       </div>
                     </label>
                   )}
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Right Upload Panel */}
+            {/* Right Column: Files Upload Area */}
             <div className="lg:col-span-2">
               
-              {/* Error box */}
+              {/* Error messages banner */}
               {(error || fileError) && (
-                <div className="flex items-start gap-3 bg-red-900/50 border border-red-500/40 rounded-xl px-5 py-4 mb-6">
+                <div className="flex items-start gap-3 bg-red-900/50 border border-red-500/40 rounded-xl px-5 py-4 mb-6 animate-fade-in">
                   <div className="flex-1">
-                    <p className="text-red-300 font-semibold text-sm">Error Processing Document</p>
+                    <p className="text-red-300 font-semibold text-sm">Failed to Process</p>
                     <p className="text-red-400 text-xs mt-0.5">{error ?? fileError}</p>
                   </div>
                   <button onClick={() => { setError(null); setFileError(null); }} className="text-red-400 hover:text-red-200">
@@ -644,20 +880,24 @@ export default function RemoveWatermarkPage() {
                 </div>
               )}
 
-              {/* Upload Stage */}
+              {/* Upload stage Dropzone */}
               {stage === 'idle' && (
                 <Dropzone
                   onFileSelect={() => {}}
                   onFilesSelect={handleFilesSelect}
                   multiple={true}
                   onError={(msg) => setFileError(msg)}
-                  accept=".pdf,.pptx"
-                  acceptLabel="PDF files (.pdf) and PowerPoint files (.pptx) only"
+                  accept={activeTool === 'remove' ? '.pdf,.pptx' : '.pdf'}
+                  acceptLabel={
+                    activeTool === 'remove' 
+                      ? 'PDF files (.pdf) and PowerPoint files (.pptx) only' 
+                      : 'PDF files (.pdf) only'
+                  }
                   dragLabel="Documents"
                 />
               )}
 
-              {/* Processing Stage */}
+              {/* Processing stage */}
               {stage === 'processing' && (
                 <div className="bg-slate-950/20 border border-white/10 rounded-2xl p-10 text-center relative overflow-hidden shadow-2xl glass">
                   <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-rose-500 via-pink-400 to-rose-500 animate-scan" />
@@ -666,7 +906,9 @@ export default function RemoveWatermarkPage() {
                     <Spinner size="lg" color="purple" />
                   </div>
                   
-                  <h3 className="text-white font-bold text-xl mb-1">Removing Watermark</h3>
+                  <h3 className="text-white font-bold text-xl mb-1">
+                    {activeTool === 'remove' ? 'Removing Watermark' : 'Generating Watermark'}
+                  </h3>
                   <p className="text-rose-400 text-xs font-bold tracking-wider uppercase mb-4">Processing 100% In-Browser</p>
                   <p className="text-gray-300 text-sm mb-6">{progress.label}</p>
 
@@ -676,7 +918,7 @@ export default function RemoveWatermarkPage() {
                 </div>
               )}
 
-              {/* Ready to process */}
+              {/* Queued files display */}
               {files.length > 0 && stage === 'file_selected' && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6 shadow-xl animate-fade-in-up">
                   <h3 className="text-white font-semibold text-lg border-b border-white/10 pb-3 flex justify-between items-center">
@@ -710,14 +952,13 @@ export default function RemoveWatermarkPage() {
                     ))}
                   </div>
 
-                  {/* Add more files browse action */}
                   <div className="pt-2">
                     <button
                       onClick={() => {
                         const input = document.createElement('input')
                         input.type = 'file'
                         input.multiple = true
-                        input.accept = '.pdf,.pptx'
+                        input.accept = activeTool === 'remove' ? '.pdf,.pptx' : '.pdf'
                         input.onchange = (e: any) => {
                           const newFiles = Array.from(e.target.files || []) as File[]
                           if (newFiles.length > 0) handleFilesSelect(newFiles)
@@ -733,7 +974,9 @@ export default function RemoveWatermarkPage() {
                   <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-4 flex gap-3 text-xs text-rose-300 leading-relaxed">
                     <span>💡</span>
                     <div>
-                      Click the button below to strip matching text shapes and background overlays. All files are processed sequentially in your browser memory.
+                      {activeTool === 'remove' 
+                        ? 'Click the button below to strip matching text shapes and background overlays client-side.'
+                        : 'Click the button below to draw custom diagonal text watermarks directly onto all PDF pages client-side.'}
                     </div>
                   </div>
 
@@ -742,7 +985,7 @@ export default function RemoveWatermarkPage() {
                       onClick={handleProcess}
                       className="flex-1 py-4 px-6 bg-gradient-to-r from-rose-600 to-pink-600 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-rose-500/25 text-base flex items-center justify-center gap-2"
                     >
-                      ✨ Remove Watermarks ({files.length} {files.length === 1 ? 'file' : 'files'})
+                      ✨ {activeTool === 'remove' ? 'Remove Watermarks' : 'Inject Watermarks'} ({files.length} {files.length === 1 ? 'file' : 'files'})
                     </button>
 
                     <button
@@ -763,4 +1006,3 @@ export default function RemoveWatermarkPage() {
     </div>
   )
 }
-
