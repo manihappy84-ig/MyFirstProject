@@ -32,21 +32,26 @@ export function Dropzone({
     (filesList: File[]) => {
       const validFiles: File[] = []
       
+      const allowedTypes = accept.split(',').map((t) => t.trim().toLowerCase())
+      
       for (const file of filesList) {
-        if (accept.includes('image')) {
-          if (!file.type.startsWith('image/')) {
-            onError?.(`"${file.name}" is not a valid image file.`)
-            continue
+        const nameLower = file.name.toLowerCase()
+        const mimeLower = file.type.toLowerCase()
+        
+        const isMatch = allowedTypes.some((allowed) => {
+          if (allowed.startsWith('.')) {
+            return nameLower.endsWith(allowed)
+          } else if (allowed.endsWith('/*')) {
+            const prefix = allowed.slice(0, -2)
+            return mimeLower.startsWith(prefix)
+          } else {
+            return mimeLower === allowed
           }
-        } else {
-          const nameLower = file.name.toLowerCase()
-          const isPdf = file.type.includes('pdf') || nameLower.endsWith('.pdf')
-          const isPptx = nameLower.endsWith('.pptx') || file.type.includes('presentation')
-          
-          if (!isPdf && !isPptx) {
-            onError?.(`"${file.name}" is not a valid file format.`)
-            continue
-          }
+        })
+        
+        if (!isMatch) {
+          onError?.(`"${file.name}" is not a valid file format.`)
+          continue
         }
         if (file.size > maxSizeMB * 1024 * 1024) {
           onError?.(`"${file.name}" is too large. Maximum size is ${maxSizeMB}MB.`)
